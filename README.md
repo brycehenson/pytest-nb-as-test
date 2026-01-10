@@ -252,10 +252,10 @@ script is dumped.
 
 ## Usage summary
 
-1. Install the plugin (copy `pytest_notebook_test` into your project and
-   reference it in a `pytest_plugins` variable in your `conftest.py`, or
-   package it and register via the `[project.entry-points.pytest11]` in
-   your `pyproject.toml`).
+1. Install the plugin by adding a Git URL dependency in your
+   `pyproject.toml` (for example:
+   `pytest-notebook-test @ git+https://github.com/ORG/REPO.git@main`), then
+   install your project as normal.
 2. Run pytest.  Any notebooks discovered will be collected as tests.
 3. Use inline directives to control which cells run and whether
    exceptions are expected.
