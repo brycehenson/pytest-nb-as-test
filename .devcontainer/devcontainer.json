@@ -1,0 +1,43 @@
+{
+  "name": "llm-text-rate",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "runArgs": [
+    "--add-host=host.docker.internal:host-gateway"
+  ],
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.globalModuleInstallation": true
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.pylint",
+        "ms-python.black-formatter",
+        "ms-python.isort",
+        "ms-toolsai.jupyter",
+        "openai.chatgpt",
+        "ms-python.vscode-pylance",
+        "yzhang.markdown-all-in-one",
+        "streetsidesoftware.code-spell-checker",
+        "vscode-icons-team.vscode-icons",
+        "mhutchie.git-graph",
+        "njpwerner.autodocstring",
+        "Gruntfuggly.todo-tree",
+        "dnut.rewrap-revived",
+        "ms-vsliveshare.vsliveshare"
+      ]
+    }
+  },
+  "forwardPorts": [
+    8888
+  ],
+  "remoteUser": "vscode",
+  "containerEnv": {
+    "WorkspaceFolder": "${containerWorkspaceFolder}"
+  }
+}

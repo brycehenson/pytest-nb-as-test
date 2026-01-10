@@ -1,0 +1,89 @@
+{
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.sortImports": "explicit"
+    },
+    "editor.rulers": [
+        120
+    ],
+    "python.languageServer": "Pylance",
+    "python.formatting.provider": "black",
+    "python.sortImports.path": "isort",
+    "python.analysis.typeCheckingMode": "basic",
+    "python.testing.pytestArgs": [
+        "."
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+    "python.testing.autoTestDiscoverOnSaveEnabled": true,
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter"
+    },
+    // Spell check only in comments & strings
+    "cSpell.languageSettings": [
+        // This one works with Python
+        {
+            "languageId": "python",
+            "includeRegExpList": [
+                "/#.*/",
+                "/('''|\"\"\")[^\\1]+?\\1/g",
+                "strings"
+            ]
+        },
+        // This one works with JavaScript, Typescript, etc
+        {
+            "languageId": "javascript,typescript",
+            "includeRegExpList": [
+                "CStyleComment",
+                "strings"
+            ]
+        }
+    ],
+    "autoDocstring.docstringFormat": "google-notypes",
+    "cSpell.language": "en,en-GB,en-US",
+    "workbench.iconTheme": "vscode-icons",
+    "todo-tree.tree.scanMode": "workspace",
+    "todo-tree.regexCaseSensitive": false,
+    // Enable compound words like 'errormessage'
+    "cSpell.allowCompoundWords": true,
+    // Import custom dictionaries
+    "cSpell.customDictionaries": {
+        "physics": {
+            "name": "physics",
+            "path": "./.vscode/dictionary/physics.txt",
+            "scope": "workspace",
+            "addWords": true
+        },
+        "misc": {
+            "name": "misc",
+            "path": "./.vscode/dictionary/misc.txt",
+            "scope": "workspace",
+            "addWords": true
+        }
+    },
+    // Default end-of-line character to UNIX-style
+    "files.eol": "\n",
+    // auto wrap lines in comments 
+    "rewrap.autoWrap.enabled": true,
+    "rewrap.wrappingColumn": 120,
+    "files.autoSave": "onFocusChange",
+    "todo-tree.regex.regexCaseSensitive": false,
+    "cSpell.ignorePaths": [
+        "package-lock.json",
+        "node_modules",
+        "vscode-extension",
+        ".git/objects",
+        ".vscode",
+        ".vscode-insiders",
+        ".devcontainer"
+    ],
+    "remote.localPortHost": "allInterfaces",
+    "notebook.output.textLineLimit": 100,
+    "notebook.formatOnSave.enabled": true,
+    "notebook.codeActionsOnSave": {
+        "source.sortImports": "explicit"
+    },
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "notebook.defaultFormatter": "ms-python.black-formatter",
+    "todo-tree.general.automaticGitRefreshInterval": 60
+}

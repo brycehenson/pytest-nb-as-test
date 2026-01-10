@@ -1,0 +1,7 @@
+# Miscellaneous dictionary
+deserialise
+dtype
+lmfit
+ndarray
+plotly
+pydantic

@@ -1,0 +1,5 @@
+{
+    // Leave empty. Otherwise, co-workers of workspace will be harrassed with alerts. 
+    // Required extensions should be added to the devcontainer.
+    "recommendations": []
+}

@@ -1,0 +1,5 @@
+# Physics vocabulary/jargons/acronyms 
+hyperfine
+rabi
+zeeman
+Ioffe

@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+display="${DISPLAY:-:100}"
+
+# Prefer an explicit override, then system chromium, then choreographer's download.
+chromium_bin="${CHROME_BIN:-}"
+if [ -z "$chromium_bin" ]; then
+  for candidate in /usr/bin/chromium /usr/bin/chromium-browser; do
+    if [ -x "$candidate" ]; then
+      chromium_bin="$candidate"
+      break
+    fi
+  done
+fi
+if [ -z "$chromium_bin" ]; then
+  chromium_bin="$(python - <<'PY'
+try:
+    from choreographer.cli._cli_utils import get_chrome_download_path
+    path = get_chrome_download_path()
+    if path:
+        print(path)
+except Exception:
+    pass
+PY
+)"
+fi
+if [ -z "$chromium_bin" ] || [ ! -x "$chromium_bin" ]; then
+  echo "chrome-kaleido: chromium binary not found; set CHROME_BIN or install chromium." >&2
+  exit 1
+fi
+
+# Start Xvfb once if needed
+if ! xdpyinfo -display "$display" >/dev/null 2>&1; then
+  # Clear stale lock if present
+  lock="/tmp/.X${display#:}-lock"
+  if [ -f "$lock" ]; then
+    rm -f "$lock"
+  fi
+  Xvfb "$display" -screen 0 1280x720x24 -ac +extension GLX +render -noreset &
+  export DISPLAY="$display"
+else
+  export DISPLAY="$display"
+fi
+
+# Kaleido's driver adds --headless/--disable-gpu; strip them so WebGL can
+# initialize against Xvfb + SwiftShader.
+chromium_args=()
+for arg in "$@"; do
+  case "$arg" in
+    --headless|--headless=new|--headless=chrome|--disable-gpu)
+      ;;
+    *)
+      chromium_args+=("$arg")
+      ;;
+  esac
+done
+
+# Exec Chromium with software WebGL
+exec "$chromium_bin" \
+  --no-sandbox \
+  --disable-dev-shm-usage \
+  --use-gl=angle \
+  --use-angle=swiftshader-webgl \
+  --enable-unsafe-swiftshader \
+  --disable-features=Vulkan \
+  "${chromium_args[@]}"
