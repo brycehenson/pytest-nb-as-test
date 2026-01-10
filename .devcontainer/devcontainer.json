@@ -1,5 +1,5 @@
 {
-  "name": "llm-text-rate",
+  "name": "pytest_notebooks",
   "build": {
     "dockerfile": "Dockerfile",
     "context": ".."
