@@ -254,7 +254,7 @@ script is dumped.
 
 1. Install the plugin by adding a Git URL dependency in your
    `pyproject.toml` (for example:
-   `pytest-notebook-test @ git+https://github.com/ORG/REPO.git@main`), then
+   `pytest-notebook-test @ git+https://github.com/brycehenson/pytest_notebook@main`), then
    install your project as normal.
 2. Run pytest.  Any notebooks discovered will be collected as tests.
 3. Use inline directives to control which cells run and whether

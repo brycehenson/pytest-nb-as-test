@@ -1,5 +1,5 @@
 [project]
-name = "pytest_notrbooks"
+name = "pytest-notebooks"
 version = "0.1.0"
 description = "Lightweight starter template for Python applications and libraries."
 readme = "README.md"
