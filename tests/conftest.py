@@ -5,4 +5,4 @@ package can exercise it.  Without this file pytest will not know
 about the plugin when run inside this package.
 """
 
-pytest_plugins = ["pytest_notebook_test.plugin"]
+pytest_plugins = ["pytester"]

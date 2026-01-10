@@ -117,9 +117,7 @@ def test_strip_line_magics(pytester: pytest.Pytester) -> None:
     # specify a directory for generated scripts
     gen_dir = pytester.path / "generated"
     gen_dir.mkdir()
-    result = pytester.runpytest(
-        f"--notebook-keep-generated={gen_dir}"
-    )
+    result = pytester.runpytest(f"--notebook-keep-generated={gen_dir}")
     result.assert_outcomes(passed=1)
     # one file should be generated
     gen_files = list(gen_dir.glob("*.py"))
@@ -127,29 +125,6 @@ def test_strip_line_magics(pytester: pytest.Pytester) -> None:
     content = gen_files[0].read_text()
     # ensure that lines starting with '%' were commented out
     assert "#%time" in content
-
-
-def test_env_var_directory(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Respect NOTEBOOK_DIR_TO_TEST environment variable when no --notebook-dir is given.
-
-    When the environment variable is set the plugin should only collect
-    notebooks under that directory.  We copy two notebooks: one inside
-    the directory pointed to by the environment variable and one outside.
-    Only the one inside should be collected, resulting in a single pass.
-    """
-    notebooks_dir = Path(__file__).parent / "notebooks"
-    # create directories
-    inside = pytester.path / "inside"
-    outside = pytester.path / "outside"
-    inside.mkdir()
-    outside.mkdir()
-    # copy notebooks
-    copy_notebook(notebooks_dir / "test_simple.ipynb", inside)
-    copy_notebook(notebooks_dir / "test_simple.ipynb", outside)
-    # set env var
-    monkeypatch.setenv("NOTEBOOK_DIR_TO_TEST", str(inside))
-    result = pytester.runpytest()
-    result.assert_outcomes(passed=1)
 
 
 def test_cli_default_all_false(pytester: pytest.Pytester) -> None:
@@ -203,25 +178,6 @@ def test_sync_exec_mode(pytester: pytest.Pytester) -> None:
     content = gen_files[0].read_text()
     assert "def run_notebook()" in content
     assert "async def run_notebook()" not in content
-
-
-def test_glob_filtering(pytester: pytest.Pytester) -> None:
-    """Limit notebook collection using a glob filter.
-
-    Args:
-        pytester: Pytest fixture for running tests in a temporary workspace.
-
-    Example:
-        pytest -k test_glob_filtering
-    """
-    notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "test_glob_filter.ipynb", pytester.path)
-    copy_notebook(notebooks_dir / "test_skip_all.ipynb", pytester.path)
-    result = pytester.runpytest(
-        f"--notebook-dir={pytester.path}",
-        "--notebook-glob=test_glob_*.ipynb",
-    )
-    result.assert_outcomes(passed=1)
 
 
 def test_skip_all_directive(pytester: pytest.Pytester) -> None:

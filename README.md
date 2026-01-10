@@ -1,8 +1,117 @@
 # pytest-notebook-test Plugin
 
+## Use case
+
+Use this plugin when you want Jupyter notebooks (`.ipynb`) to behave like
+normal pytest tests.  It runs notebook cells in-process (no Jupyter kernel),
+so your fixtures, monkeypatching, and test settings apply directly, while a
+simple directive language lets you skip or enforce specific cells.
+
+## Add as a package
+
+Add the dependency to your project (example for `pyproject.toml`):
+
+```toml
+[project]
+dependencies = [
+  "pytest-notebook-test @ git+https://github.com/brycehenson/pytest_notebook@main",
+]
+```
+
+## Run it
+
+Run pytest as usual; notebooks are collected alongside your tests:
+
+```bash
+pytest
+```
+
+## Suggested conftest snippets
+
+Put these in a `conftest.py` near your notebooks and keep them scoped to
+notebook tests via the `notebook` marker.
+
+### NumPy RNG: seed and ensure it is unused
+
+```python
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def seed_and_lock_numpy_rng(request: pytest.FixtureRequest) -> None:
+    if request.node.get_closest_marker("notebook") is None:
+        yield
+        return
+
+    try:
+        import numpy as np
+    except ModuleNotFoundError:
+        yield
+        return
+
+    np.random.seed(0)
+    state = np.random.get_state()
+    yield
+    new_state = np.random.get_state()
+
+    same_state = (
+        state[0] == new_state[0]
+        and state[2:] == new_state[2:]
+        and np.array_equal(state[1], new_state[1])
+    )
+    if not same_state:
+        raise AssertionError("NumPy RNG state changed; random was called.")
+```
+
+### Matplotlib backend
+
+```python
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def set_matplotlib_backend(request: pytest.FixtureRequest) -> None:
+    if request.node.get_closest_marker("notebook") is None:
+        yield
+        return
+
+    try:
+        import matplotlib
+    except ModuleNotFoundError:
+        yield
+        return
+
+    matplotlib.use("Agg")
+    yield
+```
+
+### Plotly renderer
+
+```python
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def set_plotly_renderer(request: pytest.FixtureRequest) -> None:
+    if request.node.get_closest_marker("notebook") is None:
+        yield
+        return
+
+    try:
+        import plotly.io as pio
+    except ModuleNotFoundError:
+        yield
+        return
+
+    pio.renderers.default = "jpg"
+    yield
+```
+
+## Overview
+
 This plugin turns Jupyter notebooks (`.ipynb` files) into first‑class pytest
 test items.  It is based on the harness described in the task
-(`test_notebooks.py`) but packaged as a proper pytest extension with a set of
+but packaged as a proper pytest extension with a set of
 configuration options.  It allows notebooks to be executed as tests within
 the same Python process as your normal test suite while providing a
 directive language for fine grained control over which cells are executed.
@@ -40,13 +149,6 @@ matching the `test_*.py` pattern, or any files explicitly passed on the
 command line will be collected.  You do not need to pass notebook files
 directly to pytest – if they live alongside your Python tests they will
 be picked up automatically.
-
-If you wish to limit collection to particular folders the plugin
-exposes the `--notebook-dir` option (see below) and honours the
-`NOTEBOOK_DIR_TO_TEST` environment variable.  When one or more
-`--notebook-dir` options are provided the plugin will only collect
-notebooks under those directories.  The default is to collect all
-`.ipynb` files discovered by pytest.
 
 ## Directive language
 
@@ -137,20 +239,9 @@ raise ValueError("Intentional failure for demonstration")
 
 ## Runtime prelude and code transformation
 
-Before executing any notebook code the plugin injects a small prelude to
-provide a deterministic and non‑interactive runtime:
-
-* The numpy random generator is seeded by calling
-  `numpy.random.seed(SEED)` where `SEED` comes from the
-  `--notebook-seed` option (default `42`).
-* Plotly rendering is set to the renderer specified by
-  `--notebook-plotly-renderer` (default `jpg`).  This ensures that
-  interactive widgets are not opened during test runs.
-* Matplotlib’s backend is set via `matplotlib.use(MPL_BACKEND)` where
-  `MPL_BACKEND` comes from `--notebook-mpl-backend` (default
-  `'Agg'`).  This prevents pop‑up windows.
-* The `pytest` module is imported so that `pytest.raises` is available
-  for exception handling.
+Before executing any notebook code the plugin injects a minimal prelude
+that imports `pytest` so `pytest.raises` is available for exception
+handling.
 
 After the prelude the plugin defines a wrapper function
 `run_notebook()` (or `async def run_notebook()` in async mode) into
@@ -188,19 +279,10 @@ ones are summarised below.
 
 | Option | Default | Description |
 |-------|---------|-------------|
-| `--notebook-dir DIR` (repeatable) | None | Limit notebook collection to the given directory (recursively).  If unspecified all `.ipynb` files discovered by pytest are collected.  Multiple directories may be given. |
-| `--notebook-glob PATTERN` | `**/*.ipynb` | Glob pattern applied under each `--notebook-dir` to select notebooks.  Only has an effect when `--notebook-dir` is specified. |
 | `--notebook-default-all {true,false}` | `true` | Initial value of the `test_all_cells` flag.  If `false` then cells without an explicit `test-cell` directive will be skipped until `default-all=True` is encountered. |
-| `--notebook-seed INT` | `42` | Seed passed to `numpy.random.seed()` in the prelude. |
-| `--notebook-mpl-backend NAME` | `Agg` | Backend passed to `matplotlib.use()`. |
-| `--notebook-plotly-renderer NAME` | `jpg` | Renderer assigned to `plotly.io.renderers.default`. |
 | `--notebook-disable-line-magics {true,false}` | `true` | If true lines beginning with `%` in code cells are turned into comments.  If false the plugin will not modify such lines, and IPython magics will likely cause a syntax error under pytest. |
 | `--notebook-keep-generated` | `none` | Controls dumping of the generated test script.  `none` means never dump; `onfail` dumps the script into the report upon a test failure; any other string is treated as a path and the script is written there with a filename derived from the notebook name. |
 | `--notebook-exec-mode {async,sync}` | `async` | Whether to generate `async def` or `def` for the wrapper.  If `async`, the plugin marks the test item with `pytest.mark.asyncio` if the `pytest-asyncio` plugin is installed.  If `sync`, the code runs synchronously. |
-
-### Environment variables
-
-* `NOTEBOOK_DIR_TO_TEST` – if set and no `--notebook-dir` is supplied, the value of this environment variable is used as a single `--notebook-dir`.  This mirrors the behaviour of the original harness.  If the option is provided on the command line it takes precedence over the environment variable.
 
 ### pytest.ini / pyproject.toml settings
 
@@ -210,8 +292,6 @@ You can set options in your `pytest.ini` or `pyproject.toml` under
 ```ini
 [pytest]
 notebook_default_all = false
-notebook_seed = 123
-notebook_mpl_backend = Agg
 notebook_disable_line_magics = true
 ```
 
@@ -271,8 +351,7 @@ python run_demo.py
 ```
 
 The demo copies a small set of notebooks into a temporary workspace,
-invokes pytest with `--notebook-dir`, and reports the outcome for each
-scenario.  By default it exercises:
+invokes pytest, and reports the outcome for each scenario.  By default it exercises:
 
 * `tests/notebooks/test_simple.ipynb` for a basic pass case.
 * `tests/notebooks/test_async_exec_mode.ipynb` to demonstrate async
@@ -290,8 +369,6 @@ The pytest suite in `tests/test_plugin.py` exercises the plugin using
 notebooks under `tests/notebooks/`.  New cases cover:
 
 * async vs. sync execution (`--notebook-exec-mode=sync`)
-* notebook discovery filtering (`--notebook-dir` with
-  `--notebook-glob`)
 * generated script retention (`--notebook-keep-generated=none`)
 
 Run the tests as usual:

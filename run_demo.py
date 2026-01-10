@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +84,9 @@ def run_demo() -> int:
                     if generated_dir is None:
                         generated_dir = tmp_path / "generated"
                         generated_dir.mkdir(parents=True, exist_ok=True)
-                    resolved_args.append(arg.replace("{generated_dir}", str(generated_dir)))
+                    resolved_args.append(
+                        arg.replace("{generated_dir}", str(generated_dir))
+                    )
                 else:
                     resolved_args.append(arg)
             cmd = [
@@ -92,8 +94,6 @@ def run_demo() -> int:
                 "-q",
                 "-p",
                 "pytest_notebook_test.plugin",
-                "--notebook-dir",
-                str(tmp_path),
                 str(tmp_path),
                 *resolved_args,
             ]
