@@ -453,7 +453,8 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
     code to the report if configured to do so.  The hook is implemented
     as a wrapper using ``yield`` to access the generated report.
     """
-    rep = yield
+    outcome = yield
+    rep = outcome.get_result()
     if isinstance(item, NotebookItem):
         # rep is a TestReport for call and for setup/teardown phases
         item._dump_generated_code(rep)
