@@ -9,7 +9,6 @@ asserts on the outcome or output.  The notebooks reside in the
 
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
 
@@ -149,3 +148,93 @@ def test_cli_default_all_false(pytester: pytest.Pytester) -> None:
     copy_notebook(notebooks_dir / "test_simple.ipynb", pytester.path)
     result = pytester.runpytest("--notebook-default-all=false")
     result.assert_outcomes(skipped=1)
+
+
+def test_async_exec_mode(pytester: pytest.Pytester) -> None:
+    """Exercise async execution mode with an awaitable cell.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_async_exec_mode
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    copy_notebook(notebooks_dir / "test_async_exec_mode.ipynb", pytester.path)
+    result = pytester.runpytest()
+    result.assert_outcomes(passed=1)
+
+
+def test_sync_exec_mode(pytester: pytest.Pytester) -> None:
+    """Force sync execution mode and inspect the generated script.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_sync_exec_mode
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    copy_notebook(notebooks_dir / "test_sync_exec_mode.ipynb", pytester.path)
+    gen_dir = pytester.path / "generated"
+    gen_dir.mkdir()
+    result = pytester.runpytest(
+        "--notebook-exec-mode=sync",
+        f"--notebook-keep-generated={gen_dir}",
+    )
+    result.assert_outcomes(passed=1)
+    gen_files = list(gen_dir.glob("*.py"))
+    assert gen_files, "No generated script produced"
+    content = gen_files[0].read_text()
+    assert "def run_notebook()" in content
+    assert "async def run_notebook()" not in content
+
+
+def test_glob_filtering(pytester: pytest.Pytester) -> None:
+    """Limit notebook collection using a glob filter.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_glob_filtering
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    copy_notebook(notebooks_dir / "test_glob_filter.ipynb", pytester.path)
+    copy_notebook(notebooks_dir / "test_skip_all.ipynb", pytester.path)
+    result = pytester.runpytest(
+        f"--notebook-dir={pytester.path}",
+        "--notebook-glob=test_glob_*.ipynb",
+    )
+    result.assert_outcomes(passed=1)
+
+
+def test_skip_all_directive(pytester: pytest.Pytester) -> None:
+    """Skip all cells when the notebook disables the default.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_skip_all_directive
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    copy_notebook(notebooks_dir / "test_skip_all.ipynb", pytester.path)
+    result = pytester.runpytest()
+    result.assert_outcomes(skipped=1)
+
+
+def test_keep_generated_none(pytester: pytest.Pytester) -> None:
+    """Ensure generated scripts are not attached when disabled.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_keep_generated_none
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    copy_notebook(notebooks_dir / "test_failure.ipynb", pytester.path)
+    result = pytester.runpytest("--notebook-keep-generated=none")
+    result.assert_outcomes(failed=1)
+    assert "generated notebook script" not in result.stdout.str()
