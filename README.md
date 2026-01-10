@@ -261,3 +261,41 @@ script is dumped.
    exceptions are expected.
 4. Adjust runtime options via CLI flags, environment variables or ini
    settings to suit your environment.
+
+## Demo
+
+Run the demo harness to see the notebook-to-pytest flow end-to-end:
+
+```bash
+python run_demo.py
+```
+
+The demo copies a small set of notebooks into a temporary workspace,
+invokes pytest with `--notebook-dir`, and reports the outcome for each
+scenario.  By default it exercises:
+
+* `tests/notebooks/test_simple.ipynb` for a basic pass case.
+* `tests/notebooks/test_async_exec_mode.ipynb` to demonstrate async
+  execution.
+* `tests/notebooks/test_sync_exec_mode.ipynb` to show the sync execution
+  path and how to inspect generated scripts.
+
+When a demo uses `--notebook-keep-generated`, the harness prints the
+temporary directory so you can open the generated `.py` files and see
+the compiled notebook cells.
+
+## Testing
+
+The pytest suite in `tests/test_plugin.py` exercises the plugin using
+notebooks under `tests/notebooks/`.  New cases cover:
+
+* async vs. sync execution (`--notebook-exec-mode=sync`)
+* notebook discovery filtering (`--notebook-dir` with
+  `--notebook-glob`)
+* generated script retention (`--notebook-keep-generated=none`)
+
+Run the tests as usual:
+
+```bash
+pytest
+```
