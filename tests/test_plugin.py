@@ -48,6 +48,21 @@ def test_run_simple_notebook(pytester: pytest.Pytester) -> None:
     result.assert_outcomes(passed=1)
 
 
+def test_xdist_worksteal_hookwrapper(pytester: pytest.Pytester) -> None:
+    """Run the hookwrapper path under xdist worksteal scheduling.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_xdist_worksteal_hookwrapper
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    copy_notebook(notebooks_dir / "test_simple.ipynb", pytester.path)
+    result = pytester.runpytest_subprocess("-n", "2", "--dist", "worksteal")
+    result.assert_outcomes(passed=1)
+
+
 def test_default_all_directive(pytester: pytest.Pytester) -> None:
     """Test the ``default-all`` directive.
 
