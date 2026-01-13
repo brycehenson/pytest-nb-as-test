@@ -91,13 +91,29 @@ def assert_pytest_timeout_line(
 def test_run_simple_notebook(pytester: pytest.Pytester) -> None:
     """Ensure that a simple notebook runs without errors.
 
-    The notebook ``test_simple.ipynb`` contains two trivial cells which
+    The notebook ``example_simple_123.ipynb`` contains two trivial cells which
     should both execute.  The plugin will treat this notebook as a single
     test and should report one pass.
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "test_simple.ipynb", pytester.path)
+    copy_notebook(notebooks_dir / "example_simple_123.ipynb", pytester.path)
     result = pytester.runpytest()
+    result.assert_outcomes(passed=1)
+
+
+def test_notebook_glob_filters(pytester: pytest.Pytester) -> None:
+    """Filter notebooks by name using ``--notebook-glob``.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_notebook_glob_filters
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    copy_notebook(notebooks_dir / "example_simple_123.ipynb", pytester.path)
+    copy_notebook(notebooks_dir / "test_async_exec_mode.ipynb", pytester.path)
+    result = pytester.runpytest("--notebook-glob=example_simple_*.ipynb")
     result.assert_outcomes(passed=1)
 
 
@@ -111,7 +127,7 @@ def test_xdist_worksteal_hookwrapper(pytester: pytest.Pytester) -> None:
         pytest -k test_xdist_worksteal_hookwrapper
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "test_simple.ipynb", pytester.path)
+    copy_notebook(notebooks_dir / "example_simple_123.ipynb", pytester.path)
     result = pytester.runpytest_subprocess("-n", "2", "--dist", "worksteal")
     result.assert_outcomes(passed=1)
 
@@ -188,7 +204,7 @@ def test_cli_default_all_false(pytester: pytest.Pytester) -> None:
     therefore expect one skipped test for the simple notebook.
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "test_simple.ipynb", pytester.path)
+    copy_notebook(notebooks_dir / "example_simple_123.ipynb", pytester.path)
     result = pytester.runpytest("--notebook-default-all=false")
     result.assert_outcomes(skipped=1)
 

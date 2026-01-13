@@ -16,6 +16,7 @@ semantics.
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import os
 import re
 import time
@@ -365,6 +366,16 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="Initial default for test_all_cells (true/false).",
     )
     group.addoption(
+        "--notebook-glob",
+        action="store",
+        dest="notebook_glob",
+        default=None,
+        help=(
+            "Glob pattern for notebook files; applies to --notebook-dir or all discovered "
+            "notebooks."
+        ),
+    )
+    group.addoption(
         "--notebook-keep-generated",
         action="store",
         dest="notebook_keep_generated",
@@ -398,6 +409,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "notebook_default_all",
         default="true",
         help="Initial default for test_all_cells (true/false).",
+    )
+    parser.addini(
+        "notebook_glob",
+        default="",
+        help="Glob pattern for notebook files.",
     )
     parser.addini(
         "notebook_keep_generated",
@@ -473,43 +489,6 @@ def _resolve_option(
     return default
 
 
-def _iter_notebook_paths(config: pytest.Config) -> list[Path]:
-    """Return notebook paths under configured notebook directories.
-
-    Parameters
-    ----------
-    config: pytest.Config
-        The pytest configuration object.
-
-    Returns
-    -------
-    list[Path]
-        Notebook paths matching the configured directory and glob filters.
-    """
-    notebook_dirs = _resolve_option(
-        config,
-        "notebook_dir",
-        env_var="NOTEBOOK_DIR_TO_TEST",
-        default=[],
-    )
-    if not notebook_dirs:
-        return []
-    if isinstance(notebook_dirs, list):
-        dirs = [Path(x) for x in notebook_dirs]
-    else:
-        dirs = [Path(notebook_dirs)]
-    glob_pattern = _resolve_option(config, "notebook_glob", default="**/*.ipynb")
-    paths: list[Path] = []
-    for directory in dirs:
-        if not directory.exists():
-            continue
-        for path in directory.glob(str(glob_pattern)):
-            if path.suffix != ".ipynb":
-                continue
-            paths.append(path)
-    return paths
-
-
 def pytest_configure(config: pytest.Config) -> None:
     """Initialise the plugin and register the notebook marker."""
     # register a custom marker so that users can select notebook tests
@@ -531,58 +510,16 @@ def pytest_collect_file(
     if file_path.suffix != ".ipynb":
         return None
     config = parent.config
-    notebook_dirs = _resolve_option(
-        config,
-        "notebook_dir",
-        env_var="NOTEBOOK_DIR_TO_TEST",
-        default=[],
-    )
-    dirs: list[Path] = []
-    if notebook_dirs:
-        if isinstance(notebook_dirs, list):
-            dirs = [Path(x) for x in notebook_dirs]
-        else:
-            dirs = [Path(notebook_dirs)]
-    if dirs:
-        glob_pattern = _resolve_option(config, "notebook_glob", default="**/*.ipynb")
-        matched = False
-        for directory in dirs:
-            try:
-                rel = file_path.relative_to(directory)
-            except ValueError:
-                continue
-            if rel.match(str(glob_pattern)):
-                matched = True
-                break
-        if not matched:
+    notebook_glob = _resolve_option(config, "notebook_glob", default=None)
+    if notebook_glob:
+        # Apply name-only globs to basenames for simple filters like "test_*.ipynb".
+        if "/" in notebook_glob or os.sep in notebook_glob:
+            if not file_path.match(str(notebook_glob)):
+                return None
+        elif not fnmatch.fnmatch(file_path.name, notebook_glob):
             return None
     # create custom file collector
     return NotebookFile.from_parent(parent, path=file_path)
-
-
-def pytest_collection_modifyitems(
-    session: pytest.Session, config: pytest.Config, items: list[pytest.Item]
-) -> None:
-    """Ensure notebooks under configured directories are collected.
-
-    Parameters
-    ----------
-    session: pytest.Session
-        The active pytest session.
-    config: pytest.Config
-        The pytest configuration object.
-    items: list[pytest.Item]
-        Collected items to modify in-place.
-    """
-    notebook_paths = _iter_notebook_paths(config)
-    if not notebook_paths:
-        return
-    existing = {item.path for item in items if isinstance(item, NotebookItem)}
-    for path in notebook_paths:
-        if path in existing:
-            continue
-        notebook_file = NotebookFile.from_parent(session, path=path)
-        items.extend(notebook_file.collect())
 
 
 class NotebookFile(pytest.File):

@@ -26,15 +26,23 @@ Run pytest as usual; notebooks are collected alongside your tests:
 ```bash
 pytest
 ```
+by default all notebooks are run (`*.ipynb`) to filter use `notebook-glob`
+```bash
+pytest  --notebook-glob 'test_*.ipynb'
+```
+
+
+disable this plugin, and just run non-notebook tests.
+```bash
+pytest -p no:pytest_notebook_test
+```
 
 
 ## Notebook syntax
-
-general syntax
+directives are controlled with in comments in notebook code cells 
 ```python
 # notebook-test: <flag>=<value>
 ```
-only valid in code cells
 
 By default all notebook cells are tested, you can overide this in command line, pytest.ini or pyproject. You can also
 set it in the notebook to turn on/off testing for the remainder of the notebook. Or use two commands to turn on/off
@@ -446,14 +454,13 @@ Run the tests as usual:
 pytest
 ```
 
-To run just a single notebook or a directory of notebooks, use the
-`--notebook-dir` option (repeatable) alongside `--notebook-glob` when
-needed.  For example:
+To run just a single notebook or a subset by name, use direct paths or
+`--notebook-glob`.  For example:
 
 ```bash
-# Run a single notebook by scoping to its directory and globbing the file.
-pytest --notebook-dir tests/notebooks --notebook-glob test_simple.ipynb
+# Run a single notebook explicitly.
+pytest tests/notebooks/example_simple_123.ipynb
 
-# Run every notebook under a specific directory (recursively).
-pytest --notebook-dir tests/notebooks
+# Run every notebook matching a pattern.
+pytest tests/notebooks --notebook-glob "test_*.ipynb"
 ```
