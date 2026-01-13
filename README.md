@@ -1,4 +1,4 @@
-# pytest-notebook-test Plugin
+# pytest-nb-as-test Plugin
 [![CI pipeline status](https://github.com/brycehenson/pytest_notebook/actions/workflows/ci.yml/badge.svg)](https://github.com/brycehenson/pytest_notebook/actions/workflows/ci.yml)
 
 
@@ -19,7 +19,7 @@ Add a dependency (example `pyproject.toml`):
 ```toml
 [project]
 dependencies = [
-  "pytest-notebook-test @ git+https://github.com/brycehenson/pytest_notebook@main",
+  "pytest-nb-as-test @ git+https://github.com/brycehenson/pytest_notebook@main",
 ]
 ```
 
@@ -40,7 +40,7 @@ pytest --notebook-glob 'test_*.ipynb'
 Disable notebook collection and execution:
 
 ```bash
-pytest -p no:pytest_notebook_test
+pytest -p no:pytest_nb_as_test
 ```
 
 ## Cell directives
@@ -326,7 +326,7 @@ Several existing projects test notebooks, but they optimise for different goals.
   Inside a test you can use `%cell` to inject the corresponding notebook cell source into the generated test method.
   It can also run offline from an `.ipynb`, and it supports a lint mode plus additional structural checks such as maximum lines per cell, maximum cells per notebook, maximum number of function or class definitions, and minimum percentage of cells tested. 
 
-### How `pytest-notebook-test` differs
+### How `pytest-nb-as-test` differs
 
 This plugin is aimed at *CI enforcement of example notebooks* in scientific codebases, with two deliberate design choices:
 

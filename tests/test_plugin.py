@@ -1,4 +1,4 @@
-"""Tests for the pytest-notebook-test plugin.
+"""Tests for the pytest-nb-as-test plugin.
 
 These tests exercise a variety of plugin features using the `pytester` fixture
 provided by pytest.  Each test copies a sample notebook into the temporary

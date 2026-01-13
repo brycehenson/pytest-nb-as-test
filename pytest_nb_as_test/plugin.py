@@ -1,4 +1,4 @@
-"""pytest-notebook-test plugin
+"""pytest-nb-as-test plugin
 ===============================
 
 This module implements a pytest plugin that discovers and executes

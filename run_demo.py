@@ -1,4 +1,4 @@
-"""Demo harness for the pytest-notebook-test plugin."""
+"""Demo harness for the pytest-nb-as-test plugin."""
 
 from __future__ import annotations
 
@@ -93,7 +93,7 @@ def run_demo() -> int:
                 "pytest",
                 "-q",
                 "-p",
-                "pytest_notebook_test.plugin",
+                "pytest_nb_as_test.plugin",
                 str(tmp_path),
                 *resolved_args,
             ]

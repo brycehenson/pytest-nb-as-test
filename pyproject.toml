@@ -1,5 +1,5 @@
 [project]
-name = "pytest-notebooks"
+name = "pytest-nb-as-test"
 version = "0.1.0"
 description = "Lightweight starter template for Python applications and libraries."
 readme = "README.md"
@@ -34,7 +34,7 @@ dev = [
 ]
 
 [project.entry-points.pytest11]
-pytest_notebook_test = "pytest_notebook_test.plugin"
+pytest_nb_as_test = "pytest_nb_as_test.plugin"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
@@ -42,7 +42,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["pytest_notebook_test"]
+include = ["pytest_nb_as_test"]
 
 [tool.isort]
 profile = "black"
