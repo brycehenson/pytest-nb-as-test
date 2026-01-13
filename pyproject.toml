@@ -14,7 +14,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.4.2,<9.0.0",
+    "ipykernel>=7.0.1,<8.0.0",
+    "ipywidgets==8.1.7",
+    "jupyterlab-widgets==3.0.15",
     "black[jupyter]==25.9.0",
     "isort==7.0.0",
     "pylint==4.0.4",
@@ -28,6 +30,7 @@ dev = [
     "numpy",
     "matplotlib",
     "plotly",
+
 ]
 
 [project.entry-points.pytest11]

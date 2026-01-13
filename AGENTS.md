@@ -29,15 +29,13 @@ class LocalFieldSource(FieldSource, ABC):
     """World-space center of the source in metres."""
 ```
 - Include array shapes and physical units in docstrings; use unit suffixes in variable names when practical (e.g., `_T`, `_m2`, `_Hz`).
-- Normalize numpy inputs via `np.asarray`, validate shapes explicitly, and raise `ValueError` on mismatch.
+- Validate shapes of numpy arrays explicitly, and raise `ValueError` on mismatch.
 - When iterating, pre-allocate numpy arrays with the correct shape and fill them with `np.nan`.
 - Use `__post_init__` for validation/normalization in dataclasses; use `object.__setattr__` in frozen dataclasses.
 - Use `numpy.typing` (`npt.NDArray[...]`) for array-heavy APIs and keep full type hints.
 
 ## Repository Conventions
 - Maintain the `src/` + `tests/` structure even if you rename the package.
-- Treat `python_template` as an example domain: replace it with your own modules but keep similar layering (config → client → pipeline → service).
-- Reference data belongs in `example_text/`; long-lived vendored deps live inside `third_party/` or separate submodules.
 - Add linting/formatting tools under `[project.optional-dependencies]` (e.g. `dev`) so they are opt-in per consumer.
 
 ## Validation Workflow
@@ -46,10 +44,3 @@ class LocalFieldSource(FieldSource, ABC):
 - If you create or edit notebooks, execute them end-to-end and report the outcome.
 - Always report lint/test/notebook execution results in the final response, and explicitly call out any skips with reasons.
 
-## TODO
-- Document any deviations from these conventions once the template becomes a real project.
-- Capture preferred lint/format commands after you settle on a toolchain.
-
-## Future Improvements
-- Provide automated checks (pre-commit, CI) that exercise the template end-to-end.
-- Offer additional sample modules (CLI, API, background workers) as the template evolves.
