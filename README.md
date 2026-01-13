@@ -370,6 +370,10 @@ report, containing the exact Python code that was executed.  This
 mirrors the behaviour of the original harness, which printed the
 generated file on failure.
 
+Notebook failures also emit a simplified, cell-focused traceback that
+includes only the failing cell's code and the exception message.  This
+keeps the output short while still pointing to the relevant cell.
+
 If you supply a directory to `--notebook-keep-generated`, the plugin
 writes the generated script to that directory using a name derived from
 the notebook filename.  This can be useful for inspecting the code even

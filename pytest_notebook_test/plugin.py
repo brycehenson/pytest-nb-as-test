@@ -72,6 +72,40 @@ class SelectedCell:  # pylint: disable=too-few-public-methods
     """Per-cell timeout override in seconds."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class CellCodeSpan:  # pylint: disable=too-few-public-methods
+    """Mapping between generated code lines and a notebook cell.
+
+    Example:
+        span = CellCodeSpan(
+            index=2,
+            block_start_line=14,
+            block_end_line=21,
+            cell_start_line=16,
+            cell_end_line=18,
+            source="print('hello')",
+        )
+    """
+
+    index: int
+    """Cell index within the notebook."""
+
+    block_start_line: int
+    """First generated line for the cell block, including wrapper context."""
+
+    block_end_line: int
+    """Last generated line for the cell block, including wrapper context."""
+
+    cell_start_line: int
+    """First generated line corresponding to the cell's code."""
+
+    cell_end_line: int
+    """Last generated line corresponding to the cell's code."""
+
+    source: str
+    """Transformed cell source code that was executed."""
+
+
 class NotebookTimeoutController:  # pylint: disable=too-few-public-methods
     """Manage per-cell timeouts using pytest-timeout hooks.
 
@@ -683,6 +717,7 @@ class NotebookFile(pytest.File):
                 code="",
                 is_async=(str(exec_mode).lower() == "async"),
                 keep_generated=keep_generated,
+                cell_spans=[],
                 timeout_config=timeout_config,
                 has_timeouts=has_timeouts,
             )
@@ -691,6 +726,7 @@ class NotebookFile(pytest.File):
 
         # assemble code
         code_lines: list[str] = []
+        cell_spans: list[CellCodeSpan] = []
         # minimal prelude; runtime setup belongs in conftest fixtures
         code_lines.append("import pytest")
         # define wrapper function
@@ -700,7 +736,8 @@ class NotebookFile(pytest.File):
         # indent subsequent code by 4 spaces
         indent = "    "
         for cell in selected:
-            # add marker comment
+            # add blank line before each marker comment for readability
+            code_lines.append("")
             code_lines.append(
                 indent + f"## notebook-test notebook={self.path.name} cell={cell.index}"
             )
@@ -725,24 +762,36 @@ class NotebookFile(pytest.File):
                 f"{cell.timeout_seconds}, cell_index={cell.index}):"
             )
             code_lines.append(indent + timeout_call)
+            block_start_line = len(code_lines)
             if cell.must_raise:
                 code_lines.append(
                     indent + "    with pytest.raises(Exception) as excinfo:"
                 )
-                # indent cell code inside the context
-                for line in transformed.splitlines():
-                    code_lines.append(indent + "        " + line)
+            cell_start_line = len(code_lines) + 1
+            cell_indent = "        " if cell.must_raise else "    "
+            # indent cell code inside the context
+            for line in transformed.splitlines():
+                code_lines.append(indent + cell_indent + line)
+            cell_end_line = len(code_lines)
+            if cell.must_raise:
                 # print exception type and message
                 code_lines.append(
                     indent
                     + "    print(type(excinfo.value).__name__, str(excinfo.value))"
                 )
-            else:
-                for line in transformed.splitlines():
-                    code_lines.append(indent + "    " + line)
+            block_end_line = len(code_lines)
+            cell_spans.append(
+                CellCodeSpan(
+                    index=cell.index,
+                    block_start_line=block_start_line,
+                    block_end_line=block_end_line,
+                    cell_start_line=cell_start_line,
+                    cell_end_line=cell_end_line,
+                    source=transformed,
+                )
+            )
         # join into single script
         generated_code = "\n".join(code_lines) + "\n"
-
         # name for the test item
         item_name = f"{self.path.name}::notebook"  # used in test id
         item = NotebookItem.from_parent(
@@ -752,6 +801,7 @@ class NotebookFile(pytest.File):
             code=generated_code,
             is_async=is_async,
             keep_generated=keep_generated,
+            cell_spans=cell_spans,
             timeout_config=timeout_config,
             has_timeouts=has_timeouts,
         )
@@ -775,6 +825,7 @@ class NotebookItem(pytest.Item):
         code: str,
         is_async: bool,
         keep_generated: str | None,
+        cell_spans: list[CellCodeSpan],
         timeout_config: NotebookTimeoutConfig,
         has_timeouts: bool,
     ) -> None:
@@ -783,6 +834,7 @@ class NotebookItem(pytest.Item):
         self._generated_code = code
         self._is_async = is_async
         self._keep_generated = keep_generated or "onfail"
+        self._cell_spans = cell_spans
         self._timeout_config = timeout_config
         self._has_timeouts = has_timeouts
 
@@ -828,15 +880,82 @@ class NotebookItem(pytest.Item):
             result = func()
         return result
 
+    def _find_cell_span(self, line_no: int) -> CellCodeSpan | None:
+        """Find the cell span that contains a generated line number.
+
+        Args:
+            line_no: 1-based line number in the generated script.
+
+        Returns:
+            The matching cell span, or None if not found.
+
+        Example:
+            span = item._find_cell_span(42)
+        """
+        for span in self._cell_spans:
+            if span.block_start_line <= line_no <= span.block_end_line:
+                return span
+        return None
+
+    def _format_cell_failure(self, excinfo: pytest.ExceptionInfo) -> str | None:
+        """Build a simplified failure report for a notebook cell.
+
+        Args:
+            excinfo: Exception info from the test failure.
+
+        Returns:
+            A formatted failure message, or None if no cell match is found.
+
+        Example:
+            message = item._format_cell_failure(excinfo)
+        """
+        if not self._cell_spans:
+            return None
+        if not excinfo.traceback:
+            return None
+        notebook_path = str(self.path)
+        match_entry = None
+        for entry in reversed(excinfo.traceback):
+            if str(entry.path) == notebook_path:
+                match_entry = entry
+                break
+        if match_entry is None:
+            return None
+        raw_entry = getattr(match_entry, "_rawentry", None)
+        if raw_entry is not None and getattr(raw_entry, "tb_lineno", None):
+            line_no = raw_entry.tb_lineno
+        else:
+            line_no = match_entry.lineno
+        span = self._find_cell_span(line_no)
+        if span is None:
+            return None
+        cell_lines = span.source.splitlines()
+        if not cell_lines:
+            cell_lines = [""]
+        width = len(str(len(cell_lines)))
+        relative_line = None
+        if span.cell_start_line <= line_no <= span.cell_end_line:
+            relative_line = line_no - span.cell_start_line + 1
+        lines = [
+            f"Notebook cell failed: {self.path.name} cell={span.index}",
+            "Cell source:",
+        ]
+        for idx, line in enumerate(cell_lines, start=1):
+            marker = ">" if relative_line == idx else " "
+            lines.append(f"{marker} {idx:>{width}} | {line}")
+        lines.append("")
+        lines.append(excinfo.exconly())
+        return "\n".join(lines)
+
     def repr_failure(self, excinfo: pytest.ExceptionInfo) -> str:  # type: ignore[override]
         """Called when self.runtest() raises an exception.
 
-        We override this method to include the generated code in the
-        failure message when requested via ``--notebook-keep-generated``.
+        We override this method to emit a simplified, cell-focused failure
+        message when possible, falling back to the default formatting.
         """
-        keep = (self._keep_generated or "onfail").lower()
-        if keep == "onfail":
-            return super().repr_failure(excinfo)
+        simplified = self._format_cell_failure(excinfo)
+        if simplified is not None:
+            return simplified
         return super().repr_failure(excinfo)
 
     def _dump_generated_code(

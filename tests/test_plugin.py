@@ -205,10 +205,32 @@ def test_keep_generated_none(pytester: pytest.Pytester) -> None:
         pytest -k test_keep_generated_none
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "test_failure.ipynb", pytester.path)
+    copy_notebook(notebooks_dir / "error_cases" / "test_failure.ipynb", pytester.path)
     result = pytester.runpytest("--notebook-keep-generated=none")
     result.assert_outcomes(failed=1)
     assert "generated notebook script" not in result.stdout.str()
+
+
+def test_simplified_traceback_shows_failing_cell(pytester: pytest.Pytester) -> None:
+    """Ensure the failure output only shows the failing cell's code.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_simplified_traceback_shows_failing_cell
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    copy_notebook(
+        notebooks_dir / "error_cases" / "test_failure_multicell.ipynb",
+        pytester.path,
+    )
+    result = pytester.runpytest("--notebook-keep-generated=none")
+    result.assert_outcomes(failed=1)
+    output = result.stdout.str()
+    assert "Notebook cell failed: test_failure_multicell.ipynb cell=1" in output
+    assert 'raise ValueError("boom")' in output
+    assert 'print("before failure")' not in output
 
 
 def test_cell_timeout_uses_pytest_timeout(pytester: pytest.Pytester) -> None:

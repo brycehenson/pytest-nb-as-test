@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-collect_ignore = ["test_failure.ipynb"]
+collect_ignore = ["error_cases"]
 
 
 @pytest.fixture(autouse=True)
