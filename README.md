@@ -11,6 +11,8 @@ This plugin executes notebook code cells as `pytest` tests, so example notebooks
 - You want `.ipynb` notebooks collected by pytest and run in CI.
 - You want in process execution, so fixtures and monkeypatching apply.
 - You need per cell control (skip, force run, expect exception, timeouts) via directives.
+  
+For comparison with other plugins/ projects see [Prior art and related tools](#prior-art-and-related-tools).
 
 
 ## Install
