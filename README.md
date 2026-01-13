@@ -444,3 +444,15 @@ Run the tests as usual:
 ```bash
 pytest
 ```
+
+To run just a single notebook or a directory of notebooks, use the
+`--notebook-dir` option (repeatable) alongside `--notebook-glob` when
+needed.  For example:
+
+```bash
+# Run a single notebook by scoping to its directory and globbing the file.
+pytest --notebook-dir tests/notebooks --notebook-glob test_simple.ipynb
+
+# Run every notebook under a specific directory (recursively).
+pytest --notebook-dir tests/notebooks
+```
