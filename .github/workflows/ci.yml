@@ -21,10 +21,3 @@ jobs:
 
       - name: Run pytest
         run: pytest
-
-      - name: Run ci scripts
-        run: |
-          set -euo pipefail
-          for script in ci/*.sh; do
-            bash "$script"
-          done

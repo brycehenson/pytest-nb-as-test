@@ -59,7 +59,8 @@ Set a per-cell timeout in seconds (requires pytest-timeout).
 # notebook-test: cell-timeout-seconds=0.5
 ```
 
-Set a timeout for the entire notebook in seconds (requires pytest-timeout).
+Set a timeout for the entire notebook in seconds (requires pytest-timeout). This directive must be in the first code
+cell in the notebook.
 ```python
 # notebook-test: notebook-timeout-seconds=60
 ```
