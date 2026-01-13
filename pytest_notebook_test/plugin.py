@@ -629,9 +629,12 @@ class NotebookFile(pytest.File):
         # Parse and select cells
         selected: list[SelectedCell] = []
         test_all = default_all
+        first_code_cell_idx: int | None = None
         for idx, cell in enumerate(nb.cells):
             if cell.get("cell_type") != "code":
                 continue
+            if first_code_cell_idx is None:
+                first_code_cell_idx = idx
             source = cell.get("source", "")
             # parse directives
             directives: Dict[str, Any] = {}
@@ -667,6 +670,11 @@ class NotebookFile(pytest.File):
 
             notebook_timeout_value = directives.get("notebook-timeout-seconds")
             if notebook_timeout_value is not None:
+                if first_code_cell_idx is not None and idx != first_code_cell_idx:
+                    raise pytest.UsageError(
+                        "Directive 'notebook-timeout-seconds' must appear in the "
+                        f"first code cell of {self.path}"
+                    )
                 if notebook_timeout_directive is not None:
                     raise pytest.UsageError(
                         "Directive 'notebook-timeout-seconds' specified multiple times "

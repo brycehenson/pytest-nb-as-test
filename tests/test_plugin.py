@@ -9,6 +9,7 @@ asserts on the outcome or output.  The notebooks reside in the
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
@@ -33,6 +34,58 @@ def copy_notebook(src: Path, dst_dir: Path) -> Path:
     dst_path = dst_dir / src.name
     shutil.copy2(src, dst_path)
     return dst_path
+
+
+def assert_output_line(output: str, expected_line: str) -> None:
+    """Assert that an exact line appears in output.
+
+    Args:
+        output: Full command output to inspect.
+        expected_line: Line that must appear exactly in the output.
+
+    Example:
+        assert_output_line("a\\nb\\n", "b")
+    """
+    if expected_line not in output.splitlines():
+        raise AssertionError(f"Expected exact line not found: {expected_line!r}")
+
+
+def assert_pytest_timeout_line(
+    output: str,
+    expected_seconds: float,
+    tolerance_fraction: float = 0.3,
+) -> None:
+    """Assert that a pytest-timeout failure line appears within tolerance.
+
+    Args:
+        output: Full command output to inspect.
+        expected_seconds: Expected timeout seconds.
+        tolerance_fraction: Allowed relative deviation from expected_seconds.
+
+    Example:
+        assert_pytest_timeout_line(
+            "Failed: Timeout (>0.5s) from pytest-timeout.",
+            expected_seconds=0.5,
+            tolerance_fraction=0.3,
+        )
+    """
+    pattern = re.compile(
+        r"^Failed: Timeout \(>(?P<seconds>\d+(?:\.\d+)?)s\) " r"from pytest-timeout\.$"
+    )
+    for line in output.splitlines():
+        match = pattern.match(line)
+        if match:
+            seconds = float(match.group("seconds"))
+            lower = expected_seconds * (1.0 - tolerance_fraction)
+            upper = expected_seconds * (1.0 + tolerance_fraction)
+            if lower <= seconds <= upper:
+                return
+            raise AssertionError(
+                "pytest-timeout value out of tolerance: "
+                f"expected {expected_seconds}s ± {tolerance_fraction:.0%}, "
+                f"got {seconds}s."
+            )
+    raise AssertionError("Expected pytest-timeout failure line not found.")
 
 
 def test_run_simple_notebook(pytester: pytest.Pytester) -> None:
@@ -229,8 +282,164 @@ def test_simplified_traceback_shows_failing_cell(pytester: pytest.Pytester) -> N
     result.assert_outcomes(failed=1)
     output = result.stdout.str()
     assert "Notebook cell failed: test_failure_multicell.ipynb cell=1" in output
-    assert 'raise ValueError("boom")' in output
+    assert 'raise ValueError("boom there is an error 2345")' in output
     assert 'print("before failure")' not in output
+
+
+def test_error_line_single_cell(pytester: pytest.Pytester) -> None:
+    """Check single-cell error output matches expected line.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_error_line_single_cell
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    copy_notebook(notebooks_dir / "error_cases" / "test_failure.ipynb", pytester.path)
+    result = pytester.runpytest("-n", "0", "-s", "test_failure.ipynb")
+    result.assert_outcomes(failed=1)
+    assert_output_line(result.stdout.str(), '> 1 | raise RuntimeError("boom")')
+
+
+def test_error_line_multicell(pytester: pytest.Pytester) -> None:
+    """Check multi-cell error output matches expected lines.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_error_line_multicell
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    copy_notebook(
+        notebooks_dir / "error_cases" / "test_failure_multicell.ipynb",
+        pytester.path,
+    )
+    result = pytester.runpytest("-n", "0", "-s", "test_failure_multicell.ipynb")
+    result.assert_outcomes(failed=1)
+    output = result.stdout.str()
+    assert_output_line(
+        output,
+        '> 2 | raise ValueError("boom there is an error 2345")',
+    )
+    assert_output_line(
+        output,
+        "Notebook cell failed: test_failure_multicell.ipynb cell=1",
+    )
+
+
+def test_error_line_print_and_error(pytester: pytest.Pytester) -> None:
+    """Check error output for notebook with print and error.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_error_line_print_and_error
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    copy_notebook(
+        notebooks_dir / "error_cases" / "test_print_and_error.ipynb",
+        pytester.path,
+    )
+    result = pytester.runpytest("-n", "0", "-s", "test_print_and_error.ipynb")
+    result.assert_outcomes(failed=1)
+    assert_output_line(
+        result.stdout.str(),
+        '> 3 | raise ValueError("error on this line")',
+    )
+
+
+def test_notebook_timeout_directive_first_cell_only(
+    pytester: pytest.Pytester,
+) -> None:
+    """Require notebook timeout directives to be in the first code cell.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_notebook_timeout_directive_first_cell_only
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    copy_notebook(
+        notebooks_dir
+        / "error_cases"
+        / "test_failure_notebook_timeout_not_in_first_cell.ipynb",
+        pytester.path,
+    )
+    result = pytester.runpytest()
+    result.assert_outcomes(errors=1)
+    output = result.stdout.str() + result.stderr.str()
+    assert (
+        "Directive 'notebook-timeout-seconds' must appear in the first code cell"
+        in output
+    )
+
+
+def test_failure_notebook_timeout_reports_pytest_timeout(
+    pytester: pytest.Pytester,
+) -> None:
+    """Check notebook timeout failures report pytest-timeout details.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_failure_notebook_timeout_reports_pytest_timeout
+    """
+    pytest.importorskip("pytest_timeout")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    copy_notebook(
+        notebooks_dir / "error_cases" / "test_failure_notebook_timeout.ipynb",
+        pytester.path,
+    )
+    result = pytester.runpytest(
+        "-n",
+        "0",
+        "-s",
+        "test_failure_notebook_timeout.ipynb",
+    )
+    result.assert_outcomes(failed=1)
+    output = result.stdout.str() + result.stderr.str()
+    assert_pytest_timeout_line(
+        output,
+        expected_seconds=2.0,
+        tolerance_fraction=0.3,
+    )
+
+
+def test_failure_cell_timeout_reports_pytest_timeout(
+    pytester: pytest.Pytester,
+) -> None:
+    """Check cell timeout failures report pytest-timeout details.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_failure_cell_timeout_reports_pytest_timeout
+    """
+    pytest.importorskip("pytest_timeout")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    copy_notebook(
+        notebooks_dir / "error_cases" / "test_failure_cell_timeout.ipynb",
+        pytester.path,
+    )
+    result = pytester.runpytest(
+        "-n",
+        "0",
+        "-s",
+        "test_failure_cell_timeout.ipynb",
+    )
+    result.assert_outcomes(failed=1)
+    output = result.stdout.str() + result.stderr.str()
+    assert_pytest_timeout_line(
+        output,
+        expected_seconds=0.5,
+        tolerance_fraction=0.3,
+    )
 
 
 def test_cell_timeout_uses_pytest_timeout(pytester: pytest.Pytester) -> None:

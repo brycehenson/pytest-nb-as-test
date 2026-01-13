@@ -1,4 +1,5 @@
 # pytest-notebook-test Plugin
+[![CI pipeline status](https://github.com/brycehenson/pytest_notebook/actions/workflows/ci.yml/badge.svg)](https://github.com/brycehenson/pytest_notebook/actions/workflows/ci.yml)
 
 ## Use case
 
@@ -287,6 +288,7 @@ raise ValueError("Intentional failure for demonstration")
 Set a wall-clock timeout (seconds) for the entire notebook.  Enforcement
 is delegated to `pytest-timeout`, so that plugin must be installed and
 active.  The timeout is a hard deadline across all executed cells.
+This directive must appear in the first code cell of the notebook.
 
 ### `cell-timeout-seconds`
 
