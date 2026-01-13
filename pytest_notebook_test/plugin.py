@@ -489,6 +489,36 @@ def _resolve_option(
     return default
 
 
+def _comment_out_ipython_magics(source: str) -> str:
+    """Comment out IPython magics and shell escapes in a code cell.
+
+    Args:
+        source: Cell source code to be transformed.
+
+    Returns:
+        Transformed source with IPython line magics (``%``), cell magics (``%%``),
+        and shell escapes (``!``) commented out.
+
+    Example:
+        _comment_out_ipython_magics("%time\\nx = 1\\n")
+    """
+    if re.search(r"(^ {0,5})%%", source, flags=re.MULTILINE):
+        commented_lines: list[str] = []
+        for line in source.splitlines(keepends=True):
+            if not line.strip():
+                commented_lines.append(line)
+                continue
+            commented_lines.append(re.sub(r"^([ \\t]*)", r"\1#", line, count=1))
+        return "".join(commented_lines)
+
+    return re.sub(
+        r"(^ {0,5})([%!])",
+        lambda m: m.group(1) + "#" + m.group(2),
+        source,
+        flags=re.MULTILINE,
+    )
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Initialise the plugin and register the notebook marker."""
     # register a custom marker so that users can select notebook tests
@@ -686,21 +716,20 @@ class NotebookFile(pytest.File):
             code_lines.append(
                 indent + f"## notebook-test notebook={self.path.name} cell={cell.index}"
             )
-            # optionally comment out line magics
+            # optionally comment out IPython magics and shell escapes
             if disable_magics:
-                transformed = re.sub(
-                    r"(^ {0,5})%",
-                    lambda m: m.group(1) + "#%",
-                    cell.source,
-                    flags=re.MULTILINE,
-                )
+                transformed = _comment_out_ipython_magics(cell.source)
             else:
                 transformed = cell.source
             # ensure trailing newline
             if not transformed.endswith("\n"):
                 transformed = transformed + "\n"
-            if not any(line.strip() for line in transformed.splitlines()):
-                transformed = "pass\n"
+            has_executable = any(
+                line.strip() and not line.lstrip().startswith("#")
+                for line in transformed.splitlines()
+            )
+            if not has_executable:
+                transformed = transformed + "pass\n"
             # indent and handle must-raise
             timeout_call = (
                 f"with __notebook_timeout__(cell_timeout_seconds="

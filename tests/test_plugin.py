@@ -173,13 +173,14 @@ def test_must_raise_exception(pytester: pytest.Pytester) -> None:
 
 
 def test_strip_line_magics(pytester: pytest.Pytester) -> None:
-    """Verify that IPython line magics are commented out by default.
+    """Verify that IPython magics and shell escapes are commented out by default.
 
-    The notebook ``test_magics.ipynb`` contains cells starting with
-    ``%``.  When the plugin processes the notebook, these lines should be
-    turned into comments so that execution does not produce a syntax
-    error.  The test should pass.  As a sanity check we request that
-    generated scripts are kept in a directory and then inspect them.
+    The notebook ``test_magics.ipynb`` contains line magics, cell magics,
+    and shell escapes.  When the plugin processes the notebook, these
+    lines should be turned into comments so that execution does not
+    produce a syntax error.  The test should pass.  As a sanity check we
+    request that generated scripts are kept in a directory and then
+    inspect them.
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
     copy_notebook(notebooks_dir / "test_magics.ipynb", pytester.path)
@@ -192,8 +193,14 @@ def test_strip_line_magics(pytester: pytest.Pytester) -> None:
     gen_files = list(gen_dir.glob("*.py"))
     assert gen_files, "No generated script produced"
     content = gen_files[0].read_text()
-    # ensure that lines starting with '%' were commented out
+    # ensure that magics and shell escapes were commented out
     assert "#%time" in content
+    assert "#%matplotlib inline" in content
+    assert "#%%bash" in content
+    assert '#echo "hello from bash"' in content
+    assert '#!echo "shell escape"' in content
+    assert 'print("after shell")' in content
+    assert '#print("after shell")' not in content
 
 
 def test_cli_default_all_false(pytester: pytest.Pytester) -> None:
