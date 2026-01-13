@@ -293,3 +293,45 @@ def set_plotly_renderer(request: pytest.FixtureRequest) -> None:
     pio.renderers.default = "jpg"
     yield
 ```
+
+
+
+## Prior art and related tools
+
+Several existing projects test notebooks, but they optimise for different goals.
+
+### Output regression testing (compare stored outputs)
+- **nbval**: collects notebooks, executes them in a Jupyter kernel, and compares executed cell outputs against the outputs stored in the `.ipynb` (each cell behaves like a test). It also supports output sanitisation for noisy outputs.  
+  https://pypi.org/project/nbval/ 
+- **pytest-notebook**: executes notebooks, diffs input vs output notebooks (via `nbdime`), and can regenerate notebooks when outputs change. Also integrates with coverage tooling.  
+  https://pytest-notebook.readthedocs.io/ 
+**When to prefer these:** you want to detect changes in rendered outputs, not just “runs without error”.
+
+### Execute notebooks under pytest (smoke execution, not output diffs)
+- **pytest-nbmake**: executes notebooks during pytest using `nbclient`. Supports per-cell behaviour via notebook cell tags (for example `skip-execution`, `raises-exception`).  
+  https://github.com/treebeardtech/pytest-nbmake 
+**When to prefer this:** you want faithful notebook execution semantics (kernel based execution) and simple CI integration.
+
+### “Tests inside notebooks” (interactive and teaching workflows)
+- **pytest-ipynb2**: collects tests written in notebooks via a `%%ipytest` magic, supports fixtures and parametrisation, and executes cells above the test cell.  
+  https://musicalninjadad.github.io/pytest-ipynb2/ 
+- **ipytest**: run pytest conveniently from within a notebook (primarily interactive UX).  
+  https://github.com/chmp/ipytest 
+- **nbtest-plugin**: provides notebook-friendly assertion helpers (including DataFrame assertions) that are later collected by pytest when run with `--nbtest`.  
+  https://pypi.org/project/nbtest-plugin/ 
+- **nbcelltests**: cell-by-cell testing aimed at “linearly executed notebooks”, with JupyterLab integration.  
+  https://github.com/jpmorganchase/nbcelltests 
+  It integrates with **JupyterLab** via bundled lab and server extensions, so tests can be authored and run from the browser.
+  Tests are stored in **cell metadata**, and nbcelltests generates a Python `unittest` class with per cell methods whose state includes the cumulative context of all prior cells, mimicking linear execution.
+  Inside a test you can use `%cell` to inject the corresponding notebook cell source into the generated test method.
+  It can also run offline from an `.ipynb`, and it supports a lint mode plus additional structural checks such as maximum lines per cell, maximum cells per notebook, maximum number of function or class definitions, and minimum percentage of cells tested. 
+
+### How `pytest-notebook-test` differs
+
+This plugin is aimed at *CI enforcement of example notebooks* in scientific codebases, with two deliberate design choices:
+
+1. **In-process execution** so that normal pytest mechanisms (fixtures, `monkeypatch`, markers) can apply to notebook code.
+2. **Per-cell directives embedded in code cell comments** (`default-all`, `test-cell`, timeouts, expected exceptions), so behaviour is visible in diffs without relying on notebook metadata.
+
+If you need output regression diffs, prefer `nbval` or `pytest-notebook`.
+If you need faithful kernel execution semantics, prefer `pytest-nbmake`.
