@@ -131,22 +131,24 @@ Requires `pytest-timeout`.
 
 Precedence order:
 
-1. CLI options
-2. `pytest.ini` or `pyproject.toml`
-3. environment variables (if supported by your config)
-4. defaults
+1. In notebook directives
+2. CLI options
+3. `pytest.ini` or `pyproject.toml`
+4. environment variables (if supported by your config)
+5. defaults
 
 ### CLI options
 
 
-| Option | Default | Description |
-|-------|---------|-------------|
-| `--notebook-default-all {true,false}` | `true` | Initial value of the `test_all_cells` flag.  If `false` then cells without an explicit `test-cell` directive will be skipped until `default-all=True` is encountered. |
-| `--notebook-glob <pattern>` | `none` | Glob pattern for notebook filenames; name-only patterns match basenames, path patterns match relative paths. |
-| `--notebook-keep-generated` | `onfail` | Controls dumping of the generated test script.  `none` means never dump; `onfail` dumps the script into the report upon a test failure; any other string is treated as a path and the script is written there with a filename derived from the notebook name. |
-| `--notebook-exec-mode {async,sync}` | `async` | Whether to generate `async def` or `def` for the wrapper.  If `async`, the plugin marks the test item with `pytest.mark.asyncio` if the `pytest-asyncio` plugin is installed.  If `sync`, the code runs synchronously. |
-| `--notebook-timeout-seconds` | `none` | Wall-clock timeout for an entire notebook, enforced via `pytest-timeout`. |
-| `--notebook-cell-timeout-seconds` | `none` | Default per-cell timeout in seconds, enforced via `pytest-timeout`. |
+| Option | Type | Default | Description |
+|---|---|---:|---|
+| `--notebook-default-all` | `true` \| `false` | `true` | Initial value of the `test_all_cells` flag. If `false` then cells without an explicit `test-cell` directive will be skipped until `default-all=True` is encountered. |
+| `--notebook-glob <pattern>` | string | `none` | Glob pattern for notebook filenames, name-only patterns match basenames, path patterns match relative paths. |
+| `--notebook-keep-generated` | `none` \| `onfail` \| `<path>` (string) | `onfail` | Controls dumping of the generated test script. `none` means never dump, `onfail` dumps the script into the report upon a test failure, any other string is treated as a path and the script is written there with a filename derived from the notebook name. |
+| `--notebook-exec-mode {async,sync}` | `async` \| `sync` | `async` | Whether to generate `async def` or `def` for the wrapper. If `async`, the plugin marks the test item with `pytest.mark.asyncio` if the `pytest-asyncio` plugin is installed. If `sync`, the code runs synchronously. |
+| `--notebook-timeout-seconds` | float | `none` | Wall-clock timeout for an entire notebook, enforced via `pytest-timeout`. |
+| `--notebook-cell-timeout-seconds` | float | `none` | Default per-cell timeout in seconds, enforced via `pytest-timeout`. |
+
 
 ### pytest.ini / pyproject.toml settings
 
