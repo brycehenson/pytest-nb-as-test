@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+collect_ignore = ["test_failure.ipynb"]
+
 
 @pytest.fixture(autouse=True)
 def configure_notebook_runtime(request: pytest.FixtureRequest) -> None:

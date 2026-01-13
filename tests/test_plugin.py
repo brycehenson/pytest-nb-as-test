@@ -43,7 +43,7 @@ def test_run_simple_notebook(pytester: pytest.Pytester) -> None:
     test and should report one pass.
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    nb = copy_notebook(notebooks_dir / "test_simple.ipynb", pytester.path)
+    copy_notebook(notebooks_dir / "test_simple.ipynb", pytester.path)
     result = pytester.runpytest()
     result.assert_outcomes(passed=1)
 
@@ -113,7 +113,7 @@ def test_strip_line_magics(pytester: pytest.Pytester) -> None:
     generated scripts are kept in a directory and then inspect them.
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    nb = copy_notebook(notebooks_dir / "test_magics.ipynb", pytester.path)
+    copy_notebook(notebooks_dir / "test_magics.ipynb", pytester.path)
     # specify a directory for generated scripts
     gen_dir = pytester.path / "generated"
     gen_dir.mkdir()
@@ -209,3 +209,35 @@ def test_keep_generated_none(pytester: pytest.Pytester) -> None:
     result = pytester.runpytest("--notebook-keep-generated=none")
     result.assert_outcomes(failed=1)
     assert "generated notebook script" not in result.stdout.str()
+
+
+def test_cell_timeout_uses_pytest_timeout(pytester: pytest.Pytester) -> None:
+    """Ensure per-cell timeouts run without failing for short cells.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_cell_timeout_uses_pytest_timeout
+    """
+    pytest.importorskip("pytest_timeout")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    copy_notebook(notebooks_dir / "test_cell_timeout.ipynb", pytester.path)
+    result = pytester.runpytest()
+    result.assert_outcomes(passed=1)
+
+
+def test_notebook_timeout_uses_pytest_timeout(pytester: pytest.Pytester) -> None:
+    """Ensure notebook timeout does not trip for short notebooks.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_notebook_timeout_uses_pytest_timeout
+    """
+    pytest.importorskip("pytest_timeout")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    copy_notebook(notebooks_dir / "test_notebook_timeout.ipynb", pytester.path)
+    result = pytester.runpytest()
+    result.assert_outcomes(passed=1)

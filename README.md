@@ -26,6 +26,47 @@ Run pytest as usual; notebooks are collected alongside your tests:
 pytest
 ```
 
+
+## Notebook syntax
+
+general syntax
+```python
+# notebook-test: <flag>=<value>
+```
+only valid in code cells
+
+By default all notebook cells are tested, you can overide this in command line, pytest.ini or pyproject. You can also
+set it in the notebook to turn on/off testing for the remainder of the notebook. Or use two commands to turn on/off
+testing for a number of cells.
+```python
+# notebook-test: default-all=True|False
+```
+
+Overide the default for a single cell.
+```python
+# notebook-test: test-cell=True|False
+```
+
+Require a cell to raise any type of exception.
+```python
+# notebook-test: must-raise-exception=True
+raise ValueError("Intentional failure for demonstration")
+```
+
+Set a per-cell timeout in seconds (requires pytest-timeout).
+```python
+# notebook-test: cell-timeout-seconds=0.5
+```
+
+Set a timeout for the entire notebook in seconds (requires pytest-timeout).
+```python
+# notebook-test: notebook-timeout-seconds=60
+```
+
+
+
+
+
 ## Suggested conftest snippets
 
 Put these in a `conftest.py` near your notebooks and keep them scoped to
@@ -156,17 +197,17 @@ The directive language is embedded in Python comments at the top level of
 code cells.  A directive has the general form:
 
 ```python
-# notebook-test: <flag>=<True|False>
+# notebook-test: <flag>=<value>
 ```
 
 There may be zero to four spaces around the colon, flag name, equals
-sign and value.  Flags must appear at most once per cell.  The only
-valid values are the strings `True` and `False` (case sensitive).
-Unrecognised values or multiple occurrences of the same flag will
-produce a test failure at collection time.  Directives are ignored in
-markdown cells.
+sign and value.  Flags must appear at most once per cell.  Boolean
+directives accept `True` and `False` (case sensitive), while timeout
+directives accept numeric seconds.  Unrecognised values or multiple
+occurrences of the same flag will produce a test failure at collection
+time.  Directives are ignored in markdown cells.
 
-Three flags are currently supported:
+Five directives are currently supported:
 
 ### `default-all`
 
@@ -237,6 +278,26 @@ appears.  An example:
 raise ValueError("Intentional failure for demonstration")
 ```
 
+### `notebook-timeout-seconds`
+
+```
+# notebook-test: notebook-timeout-seconds=<float>
+```
+
+Set a wall-clock timeout (seconds) for the entire notebook.  Enforcement
+is delegated to `pytest-timeout`, so that plugin must be installed and
+active.  The timeout is a hard deadline across all executed cells.
+
+### `cell-timeout-seconds`
+
+```
+# notebook-test: cell-timeout-seconds=<float>
+```
+
+Set a per-cell timeout in seconds.  This overrides any default cell
+timeout configured via CLI/ini settings.  Enforcement is delegated to
+`pytest-timeout`.
+
 ## Runtime prelude and code transformation
 
 Before executing any notebook code the plugin injects a minimal prelude
@@ -258,12 +319,11 @@ with `must-raise-exception=True` are wrapped in a
 exception type and message.
 
 IPython line magics (lines starting with `%` up to five leading
-whitespace characters) can be automatically commented out.  This
-behaviour is controlled by `--notebook-disable-line-magics` (default
-`True`).  This simple transformation treats any line beginning with a
-percent sign as a magic and prefixes it with `#%`, converting it into a
-Python comment.  Cell magics (such as `%%bash`) and shell escapes
-(`!command`) are not supported and will result in a test failure.
+whitespace characters) are always commented out.  This simple
+transformation treats any line beginning with a percent sign as a magic
+and prefixes it with `#%`, converting it into a Python comment.  Cell
+magics (such as `%%bash`) and shell escapes (`!command`) are not
+supported and will result in a test failure.
 
 ## Configuration surfaces
 
@@ -280,9 +340,10 @@ ones are summarised below.
 | Option | Default | Description |
 |-------|---------|-------------|
 | `--notebook-default-all {true,false}` | `true` | Initial value of the `test_all_cells` flag.  If `false` then cells without an explicit `test-cell` directive will be skipped until `default-all=True` is encountered. |
-| `--notebook-disable-line-magics {true,false}` | `true` | If true lines beginning with `%` in code cells are turned into comments.  If false the plugin will not modify such lines, and IPython magics will likely cause a syntax error under pytest. |
-| `--notebook-keep-generated` | `none` | Controls dumping of the generated test script.  `none` means never dump; `onfail` dumps the script into the report upon a test failure; any other string is treated as a path and the script is written there with a filename derived from the notebook name. |
+| `--notebook-keep-generated` | `onfail` | Controls dumping of the generated test script.  `none` means never dump; `onfail` dumps the script into the report upon a test failure; any other string is treated as a path and the script is written there with a filename derived from the notebook name. |
 | `--notebook-exec-mode {async,sync}` | `async` | Whether to generate `async def` or `def` for the wrapper.  If `async`, the plugin marks the test item with `pytest.mark.asyncio` if the `pytest-asyncio` plugin is installed.  If `sync`, the code runs synchronously. |
+| `--notebook-timeout-seconds` | `none` | Wall-clock timeout for an entire notebook, enforced via `pytest-timeout`. |
+| `--notebook-cell-timeout-seconds` | `none` | Default per-cell timeout in seconds, enforced via `pytest-timeout`. |
 
 ### pytest.ini / pyproject.toml settings
 
@@ -292,7 +353,9 @@ You can set options in your `pytest.ini` or `pyproject.toml` under
 ```ini
 [pytest]
 notebook_default_all = false
-notebook_disable_line_magics = true
+notebook-timeout-seconds = 120
+notebook-cell-timeout-seconds= 10
+
 ```
 
 Values set in the ini file are overridden by command line arguments and
@@ -321,9 +384,8 @@ script is dumped.
 
 ## Limitations and future work
 
-* The plugin does not yet support per‑cell timeouts or more advanced
-  seeding of other libraries (e.g. `random`, PyTorch).  Patches are
-  welcome.
+* Timeouts rely on the `pytest-timeout` plugin; install and enable it to
+  use `notebook-timeout-seconds` and `cell-timeout-seconds`.
 * Only IPython line magics with a single leading `%` are handled.  Cell
   magics (e.g. `%%bash`) and shell escapes (`!`) are not supported and
   will cause a syntax error.
