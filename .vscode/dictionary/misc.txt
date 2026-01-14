@@ -6,3 +6,4 @@ ndarray
 plotly
 pydantic
 pytest
+pypi

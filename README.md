@@ -18,15 +18,12 @@ For comparison with other plugins/ projects see [Prior art and related tools](#p
 
 
 ## Install
-
-
 install using pip
 
 ```bash
-pip install -i https://test.pypi.org/simple/ pytest-nb-as-test
+pip install pytest-nb-as-test
 ```
 or add as dependency in `pyproject.toml`:
-
 ```toml
 [project]
 dependencies = [
