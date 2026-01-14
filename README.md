@@ -1,5 +1,5 @@
 # pytest-nb-as-test Plugin
-[![CI pipeline status](https://github.com/brycehenson/pytest_notebook/actions/workflows/ci.yml/badge.svg)](https://github.com/brycehenson/pytest_notebook/actions/workflows/ci.yml)
+[![CI pipeline status](https://github.com/brycehenson/pytest_notebook/actions/workflows/ci.yml/badge.svg?job=pytest)](https://github.com/brycehenson/pytest_notebook/actions/workflows/ci.yml)
 
 
 In scientific codebases, notebooks are a convenient way to provide executable examples, figures, and LaTeX.

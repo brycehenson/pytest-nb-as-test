@@ -1,7 +1,5 @@
 """Tests for non-notebook matplotlib backend handling."""
 
-from typing import Any, cast
-
 import matplotlib
 
 
