@@ -9,12 +9,26 @@ asserts on the outcome or output.  The notebooks reside in the
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import shutil
 import textwrap
 from pathlib import Path
 
 import pytest
+
+
+def _pytest_xdist_available() -> bool:
+    """Return True when pytest-xdist can be imported.
+
+    Example:
+        if _pytest_xdist_available():
+            print("xdist available")
+    """
+    return importlib.util.find_spec("xdist") is not None
+
+
+PYTEST_XDIST_AVAILABLE = _pytest_xdist_available()
 
 
 def assert_output_line(output: str, expected_line: str) -> None:
@@ -193,6 +207,9 @@ def test_xdist_worksteal_hookwrapper(pytester: pytest.Pytester) -> None:
     Example:
         pytest -k test_xdist_worksteal_hookwrapper
     """
+    if not PYTEST_XDIST_AVAILABLE:
+        pytest.skip("pytest-xdist not installed")
+
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "example_simple_123.ipynb"
     shutil.copy2(src, pytester.path / src.name)
@@ -396,7 +413,10 @@ def test_error_line_single_cell(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "error_cases" / "test_failure.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess("-n", "0", "-s", "test_failure.ipynb")
+    args = ("-s", "test_failure.ipynb")
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = pytester.runpytest_subprocess(*args)
     result.assert_outcomes(failed=1)
     assert_output_line(result.stdout.str(), '> 1 | raise RuntimeError("boom")')
 
@@ -413,9 +433,10 @@ def test_error_line_multicell(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "error_cases" / "test_failure_multicell.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess(
-        "-n", "0", "-s", "test_failure_multicell.ipynb"
-    )
+    args = ("-s", "test_failure_multicell.ipynb")
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = pytester.runpytest_subprocess(*args)
     result.assert_outcomes(failed=1)
     output = result.stdout.str()
     assert_output_line(
@@ -440,9 +461,10 @@ def test_error_line_print_and_error(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "error_cases" / "test_print_and_error.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess(
-        "-n", "0", "-s", "test_print_and_error.ipynb"
-    )
+    args = ("-s", "test_print_and_error.ipynb")
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = pytester.runpytest_subprocess(*args)
     result.assert_outcomes(failed=1)
     assert_output_line(
         result.stdout.str(),
@@ -492,12 +514,10 @@ def test_failure_notebook_timeout_reports_pytest_timeout(
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "error_cases" / "test_failure_notebook_timeout.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess(
-        "-n",
-        "0",
-        "-s",
-        "test_failure_notebook_timeout.ipynb",
-    )
+    args = ("-s", "test_failure_notebook_timeout.ipynb")
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = pytester.runpytest_subprocess(*args)
     result.assert_outcomes(failed=1)
     output = result.stdout.str() + result.stderr.str()
     assert_pytest_timeout_line(
@@ -522,12 +542,10 @@ def test_failure_cell_timeout_reports_pytest_timeout(
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "error_cases" / "test_failure_cell_timeout.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess(
-        "-n",
-        "0",
-        "-s",
-        "test_failure_cell_timeout.ipynb",
-    )
+    args = ("-s", "test_failure_cell_timeout.ipynb")
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = pytester.runpytest_subprocess(*args)
     result.assert_outcomes(failed=1)
     output = result.stdout.str() + result.stderr.str()
     assert_pytest_timeout_line(

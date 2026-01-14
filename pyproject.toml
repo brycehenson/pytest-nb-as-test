@@ -13,8 +13,9 @@ classifiers = [
 ]
 urls = { Homepage = "https://github.com/brycehenson/pytest-nb-as-test" }
 dependencies = [
-    "pytest>=8.4.2,<9.0.0",
-    "pytest-timeout>=2.0.0"
+    "pytest>=7.0.0,<9.0.2",
+    "pytest-timeout>=2.0.0",
+    "nbformat"
 ]
 
 [project.optional-dependencies]
