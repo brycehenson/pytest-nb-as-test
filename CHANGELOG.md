@@ -7,8 +7,6 @@ and this project follows Semantic Versioning.
 
 ## Unreleased
 
-## 0.1.5
-- change repository upload url
 
 ## 0.1.4
 - change notebook directive base to match package name
@@ -19,6 +17,7 @@ becomes
 ```
 # pytest-nb-as-test: <flag>=<value>
 ```
+- change repository upload url
 
 ## 0.1.3
 -  no change, testing release
