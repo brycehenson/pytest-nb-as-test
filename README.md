@@ -1,7 +1,8 @@
 # pytest-nb-as-test Plugin
 [![CI pipeline status](https://github.com/brycehenson/pytest_notebook/actions/workflows/ci.yml/badge.svg?job=pytest)](https://github.com/brycehenson/pytest_notebook/actions/workflows/ci.yml)
 
-![icon](icon.png)
+![icon](https://github.com/brycehenson/pytest-nb-as-test/blob/main/icon.png)
+
 
 In scientific codebases, notebooks are a convenient way to provide executable examples, figures, and LaTeX.
 However, example notebooks often become silently broken as the code evolves because developers rarely re-run them.
