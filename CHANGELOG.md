@@ -11,6 +11,7 @@ and this project follows Semantic Versioning.
 - update readme with install instructions
 - change to real pypi
 - fix workflow call
+- fix upload url
 
 ## 0.1.4
 - change notebook directive base to match package name
