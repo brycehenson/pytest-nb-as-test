@@ -11,29 +11,10 @@ from __future__ import annotations
 
 import re
 import shutil
+import textwrap
 from pathlib import Path
 
 import pytest
-
-
-def copy_notebook(src: Path, dst_dir: Path) -> Path:
-    """Copy a notebook file into a destination directory.
-
-    Parameters
-    ----------
-    src: Path
-        Source notebook file.
-    dst_dir: Path
-        Destination directory.
-
-    Returns
-    -------
-    Path
-        Path to the copied notebook in dst_dir.
-    """
-    dst_path = dst_dir / src.name
-    shutil.copy2(src, dst_path)
-    return dst_path
 
 
 def assert_output_line(output: str, expected_line: str) -> None:
@@ -70,7 +51,7 @@ def assert_pytest_timeout_line(
         )
     """
     pattern = re.compile(
-        r"^Failed: Timeout \(>(?P<seconds>\d+(?:\.\d+)?)s\) " r"from pytest-timeout\.$"
+        r"^Failed: Timeout \(>(?P<seconds>\d+(?:\.\d+)?)s\) from pytest-timeout\.$"
     )
     for line in output.splitlines():
         match = pattern.match(line)
@@ -96,8 +77,96 @@ def test_run_simple_notebook(pytester: pytest.Pytester) -> None:
     test and should report one pass.
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "example_simple_123.ipynb", pytester.path)
+    src = notebooks_dir / "example_simple_123.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest()
+    result.assert_outcomes(passed=1)
+
+
+def test_conftest_autouse_fixture_applies_to_notebooks(
+    pytester: pytest.Pytester,
+) -> None:
+    """Fail when an unconditional autouse conftest fixture is present.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_conftest_autouse_fixture_applies_to_notebooks
+    """
+    fixtures_dir = Path(__file__).parent / "fixture_testing" / "raise_error"
+    shutil.copy2(
+        fixtures_dir / "conftest_autouse_error.py",
+        pytester.path / "conftest.py",
+    )
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "example_simple_123.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    result = pytester.runpytest()
+    result.assert_outcomes(errors=1)
+
+
+def test_conftest_notebook_marker_behavior(pytester: pytest.Pytester) -> None:
+    """Apply conftest logic only to notebook-marked tests.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_conftest_notebook_marker_behavior
+    """
+    fixture_case_dir = Path(__file__).parent / "fixture_testing" / "add_marker"
+    shutil.copy2(
+        fixture_case_dir / "conftest.py",
+        pytester.path / "conftest.py",
+    )
+    test_path = pytester.path / "test_regular.py"
+    test_path.write_text(
+        textwrap.dedent(
+            """
+            import os
+
+            def test_regular_env_not_set() -> None:
+                assert os.environ.get("PYTEST_NOTEBOOK_FIXTURE") is None
+            """
+        ).lstrip()
+    )
+    src = fixture_case_dir / "test_conftest_marker.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    result = pytester.runpytest()
+    result.assert_outcomes(passed=2)
+
+
+def test_conftest_notebook_detection_sets_matplotlib_backend(
+    pytester: pytest.Pytester,
+) -> None:
+    """Verify notebook-only conftest logic for matplotlib backend.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_conftest_notebook_detection_sets_matplotlib_backend
+    """
+    fixture_case_dir = Path(__file__).parent / "fixture_testing" / "is_notebook"
+    shutil.copy2(
+        fixture_case_dir / "conftest_is_notebook.py",
+        pytester.path / "conftest.py",
+    )
+    shutil.copy2(
+        fixture_case_dir / "matplotlib.py",
+        pytester.path / "matplotlib.py",
+    )
+    shutil.copy2(
+        fixture_case_dir / "test_regular_backend.py",
+        pytester.path / "test_regular_backend.py",
+    )
+    result = pytester.runpytest("test_regular_backend.py")
+    result.assert_outcomes(passed=1)
+
+    src = fixture_case_dir / "test_matplotlib_backend.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    result = pytester.runpytest(src.name)
     result.assert_outcomes(passed=1)
 
 
@@ -111,8 +180,10 @@ def test_notebook_glob_filters(pytester: pytest.Pytester) -> None:
         pytest -k test_notebook_glob_filters
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "example_simple_123.ipynb", pytester.path)
-    copy_notebook(notebooks_dir / "test_async_exec_mode.ipynb", pytester.path)
+    src = notebooks_dir / "example_simple_123.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    src = notebooks_dir / "test_async_exec_mode.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest("--notebook-glob=example_simple_*.ipynb")
     result.assert_outcomes(passed=1)
 
@@ -127,7 +198,8 @@ def test_xdist_worksteal_hookwrapper(pytester: pytest.Pytester) -> None:
         pytest -k test_xdist_worksteal_hookwrapper
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "example_simple_123.ipynb", pytester.path)
+    src = notebooks_dir / "example_simple_123.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest_subprocess("-n", "2", "--dist", "worksteal")
     result.assert_outcomes(passed=1)
 
@@ -140,7 +212,8 @@ def test_default_all_directive(pytester: pytest.Pytester) -> None:
     The test should pass because no errors occur.
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "test_default_all_false.ipynb", pytester.path)
+    src = notebooks_dir / "test_default_all_false.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest()
     result.assert_outcomes(passed=1)
 
@@ -153,7 +226,8 @@ def test_test_cell_override(pytester: pytest.Pytester) -> None:
     Execution should complete without errors.
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "test_test_cell_override.ipynb", pytester.path)
+    src = notebooks_dir / "test_test_cell_override.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest()
     result.assert_outcomes(passed=1)
 
@@ -167,7 +241,8 @@ def test_must_raise_exception(pytester: pytest.Pytester) -> None:
     should consider this notebook passing.
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "test_must_raise.ipynb", pytester.path)
+    src = notebooks_dir / "test_must_raise.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest()
     result.assert_outcomes(passed=1)
 
@@ -183,7 +258,8 @@ def test_strip_line_magics(pytester: pytest.Pytester) -> None:
     inspect them.
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "test_magics.ipynb", pytester.path)
+    src = notebooks_dir / "test_magics.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     # specify a directory for generated scripts
     gen_dir = pytester.path / "generated"
     gen_dir.mkdir()
@@ -211,7 +287,8 @@ def test_cli_default_all_false(pytester: pytest.Pytester) -> None:
     therefore expect one skipped test for the simple notebook.
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "example_simple_123.ipynb", pytester.path)
+    src = notebooks_dir / "example_simple_123.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest("--notebook-default-all=false")
     result.assert_outcomes(skipped=1)
 
@@ -226,7 +303,8 @@ def test_async_exec_mode(pytester: pytest.Pytester) -> None:
         pytest -k test_async_exec_mode
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "test_async_exec_mode.ipynb", pytester.path)
+    src = notebooks_dir / "test_async_exec_mode.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest()
     result.assert_outcomes(passed=1)
 
@@ -241,7 +319,8 @@ def test_sync_exec_mode(pytester: pytest.Pytester) -> None:
         pytest -k test_sync_exec_mode
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "test_sync_exec_mode.ipynb", pytester.path)
+    src = notebooks_dir / "test_sync_exec_mode.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     gen_dir = pytester.path / "generated"
     gen_dir.mkdir()
     result = pytester.runpytest(
@@ -266,7 +345,8 @@ def test_skip_all_directive(pytester: pytest.Pytester) -> None:
         pytest -k test_skip_all_directive
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "test_skip_all.ipynb", pytester.path)
+    src = notebooks_dir / "test_skip_all.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest()
     result.assert_outcomes(skipped=1)
 
@@ -281,7 +361,8 @@ def test_keep_generated_none(pytester: pytest.Pytester) -> None:
         pytest -k test_keep_generated_none
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "error_cases" / "test_failure.ipynb", pytester.path)
+    src = notebooks_dir / "error_cases" / "test_failure.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest("--notebook-keep-generated=none")
     result.assert_outcomes(failed=1)
     assert "generated notebook script" not in result.stdout.str()
@@ -297,10 +378,8 @@ def test_simplified_traceback_shows_failing_cell(pytester: pytest.Pytester) -> N
         pytest -k test_simplified_traceback_shows_failing_cell
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(
-        notebooks_dir / "error_cases" / "test_failure_multicell.ipynb",
-        pytester.path,
-    )
+    src = notebooks_dir / "error_cases" / "test_failure_multicell.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest("--notebook-keep-generated=none")
     result.assert_outcomes(failed=1)
     output = result.stdout.str()
@@ -319,7 +398,8 @@ def test_error_line_single_cell(pytester: pytest.Pytester) -> None:
         pytest -k test_error_line_single_cell
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "error_cases" / "test_failure.ipynb", pytester.path)
+    src = notebooks_dir / "error_cases" / "test_failure.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest("-n", "0", "-s", "test_failure.ipynb")
     result.assert_outcomes(failed=1)
     assert_output_line(result.stdout.str(), '> 1 | raise RuntimeError("boom")')
@@ -335,10 +415,8 @@ def test_error_line_multicell(pytester: pytest.Pytester) -> None:
         pytest -k test_error_line_multicell
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(
-        notebooks_dir / "error_cases" / "test_failure_multicell.ipynb",
-        pytester.path,
-    )
+    src = notebooks_dir / "error_cases" / "test_failure_multicell.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest("-n", "0", "-s", "test_failure_multicell.ipynb")
     result.assert_outcomes(failed=1)
     output = result.stdout.str()
@@ -362,10 +440,8 @@ def test_error_line_print_and_error(pytester: pytest.Pytester) -> None:
         pytest -k test_error_line_print_and_error
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(
-        notebooks_dir / "error_cases" / "test_print_and_error.ipynb",
-        pytester.path,
-    )
+    src = notebooks_dir / "error_cases" / "test_print_and_error.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest("-n", "0", "-s", "test_print_and_error.ipynb")
     result.assert_outcomes(failed=1)
     assert_output_line(
@@ -386,12 +462,12 @@ def test_notebook_timeout_directive_first_cell_only(
         pytest -k test_notebook_timeout_directive_first_cell_only
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(
+    src = (
         notebooks_dir
         / "error_cases"
-        / "test_failure_notebook_timeout_not_in_first_cell.ipynb",
-        pytester.path,
+        / "test_failure_notebook_timeout_not_in_first_cell.ipynb"
     )
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest()
     result.assert_outcomes(errors=1)
     output = result.stdout.str() + result.stderr.str()
@@ -414,10 +490,8 @@ def test_failure_notebook_timeout_reports_pytest_timeout(
     """
     pytest.importorskip("pytest_timeout")
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(
-        notebooks_dir / "error_cases" / "test_failure_notebook_timeout.ipynb",
-        pytester.path,
-    )
+    src = notebooks_dir / "error_cases" / "test_failure_notebook_timeout.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest(
         "-n",
         "0",
@@ -446,10 +520,8 @@ def test_failure_cell_timeout_reports_pytest_timeout(
     """
     pytest.importorskip("pytest_timeout")
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(
-        notebooks_dir / "error_cases" / "test_failure_cell_timeout.ipynb",
-        pytester.path,
-    )
+    src = notebooks_dir / "error_cases" / "test_failure_cell_timeout.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest(
         "-n",
         "0",
@@ -476,7 +548,8 @@ def test_cell_timeout_uses_pytest_timeout(pytester: pytest.Pytester) -> None:
     """
     pytest.importorskip("pytest_timeout")
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "test_cell_timeout.ipynb", pytester.path)
+    src = notebooks_dir / "test_cell_timeout.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest()
     result.assert_outcomes(passed=1)
 
@@ -492,6 +565,7 @@ def test_notebook_timeout_uses_pytest_timeout(pytester: pytest.Pytester) -> None
     """
     pytest.importorskip("pytest_timeout")
     notebooks_dir = Path(__file__).parent / "notebooks"
-    copy_notebook(notebooks_dir / "test_notebook_timeout.ipynb", pytester.path)
+    src = notebooks_dir / "test_notebook_timeout.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest()
     result.assert_outcomes(passed=1)

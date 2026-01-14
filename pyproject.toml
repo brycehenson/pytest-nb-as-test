@@ -30,7 +30,6 @@ dev = [
     "numpy",
     "matplotlib",
     "plotly",
-
 ]
 
 [project.entry-points.pytest11]

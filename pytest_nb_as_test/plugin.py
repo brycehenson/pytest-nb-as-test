@@ -29,6 +29,10 @@ import nbformat  # type: ignore
 import pytest  # type: ignore
 
 
+def _notebook_placeholder() -> None:
+    """Placeholder callable to enable fixture discovery for notebook items."""
+
+
 @dataclass(frozen=True, kw_only=True)
 class NotebookTimeoutConfig:  # pylint: disable=too-few-public-methods
     """Timeout configuration for notebook execution.
@@ -555,11 +559,9 @@ def pytest_collect_file(
 class NotebookFile(pytest.File):
     """A pytest collector that reads a Jupyter notebook and yields one NotebookItem."""
 
-    def collect(
+    def collect(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
         self,
-    ) -> Iterable[
-        pytest.Item
-    ]:  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+    ) -> Iterable[pytest.Item]:
         config = self.config
         # read notebook using nbformat
         with self.path.open("r", encoding="utf-8") as f:
@@ -783,7 +785,7 @@ class NotebookFile(pytest.File):
         return [item]
 
 
-class NotebookItem(pytest.Item):
+class NotebookItem(pytest.Function):
     """A pytest Item representing a single notebook.
 
     Each NotebookItem contains the generated Python code for a notebook and
@@ -803,7 +805,7 @@ class NotebookItem(pytest.Item):
         timeout_config: NotebookTimeoutConfig,
         has_timeouts: bool,
     ) -> None:
-        super().__init__(name, parent)
+        super().__init__(name, parent, callobj=_notebook_placeholder)
         self.path = path
         self._generated_code = code
         self._is_async = is_async
@@ -841,18 +843,18 @@ class NotebookItem(pytest.Item):
         # compile code with filename for clearer tracebacks
         code_obj = compile(self._generated_code, filename=str(self.path), mode="exec")
         # execute definitions
-        exec(code_obj, namespace)
+        exec(code_obj, namespace)  # pylint: disable=exec-used
         # run wrapper
         func = namespace.get("run_notebook")
         if not callable(func):
-            return
+            return None
         if self._is_async:
             # if pytest-asyncio is installed, we could rely on its event loop, but
             # to avoid a hard dependency we just run the coroutine directly.
-            result = asyncio.run(func())
+            asyncio.run(func())
         else:
-            result = func()
-        return result
+            func()
+        return None
 
     def _find_cell_span(self, line_no: int) -> CellCodeSpan | None:
         """Find the cell span that contains a generated line number.
@@ -975,4 +977,4 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
     rep = outcome.get_result()
     if isinstance(item, NotebookItem):
         # rep is a TestReport for call and for setup/teardown phases
-        item._dump_generated_code(rep)
+        item._dump_generated_code(rep)  # pylint: disable=protected-access
