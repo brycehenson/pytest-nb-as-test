@@ -1,12 +1,22 @@
-name: CI
+name: ci
 
 on:
   push:
-  pull_request:
-  workflow_call:
+    branches: [ "main" ]
+  pull_request: # This covers all PRs targeting any branch
+
+permissions:
+  contents: read
+
+# This part stops the "double running" by canceling previous runs 
+# on the same branch/PR if you push again quickly.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   pytest:
+    name: pytest
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -24,6 +34,7 @@ jobs:
         run: pytest
 
   pylint:
+    name: pylint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -41,6 +52,7 @@ jobs:
         run: pylint pytest_nb_as_test tests
 
   pyright:
+    name: pyright
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -56,3 +68,41 @@ jobs:
 
       - name: Run pyright
         run: pyright
+
+  format:
+    name: format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+
+      - name: Check formatting
+        run: |
+          black --check .
+          isort --check-only .
+
+
+  changelog:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure CHANGELOG updated
+        run: |
+          set -euo pipefail
+          base_ref="${{ github.base_ref }}"
+          git fetch origin "${base_ref}":"refs/remotes/origin/${base_ref}" --depth=1
+          if git diff --quiet "origin/${base_ref}" -- CHANGELOG.md; then
+            echo "CHANGELOG.md has no changes relative to ${base_ref}."
+            exit 1
+          fi

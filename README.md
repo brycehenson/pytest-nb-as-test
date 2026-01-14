@@ -18,12 +18,19 @@ For comparison with other plugins/ projects see [Prior art and related tools](#p
 
 
 ## Install
-Add a dependency (example `pyproject.toml`):
+
+
+install using pip
+
+```bash
+pip install -i https://test.pypi.org/simple/ pytest-nb-as-test
+```
+or add as dependency in `pyproject.toml`:
 
 ```toml
 [project]
 dependencies = [
-  "pytest-nb-as-test @ git+https://github.com/brycehenson/pytest_notebook@main",
+  "pytest-nb-as-test",
 ]
 ```
 
