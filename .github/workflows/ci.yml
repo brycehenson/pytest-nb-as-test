@@ -2,8 +2,14 @@ name: ci
 
 on:
   push:
-  pull_request:
-  workflow_call:
+    branches: [ "main" ]
+  pull_request: # This covers all PRs targeting any branch
+
+# This part stops the "double running" by canceling previous runs 
+# on the same branch/PR if you push again quickly.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   pytest:
