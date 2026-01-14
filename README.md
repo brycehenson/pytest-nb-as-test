@@ -317,8 +317,15 @@ def set_plotly_renderer(request: pytest.FixtureRequest) -> None:
         yield
         return
 
-    pio.renderers.default = "jpg"
+    os.environ.setdefault("PLOTLY_RENDERER", "json")
+
+    import plotly.io as pio
+
+    pio.renderers.default = "json"
+    pio.renderers.render_on_display = False
+    pio.show = lambda *args, **kwargs: None
     yield
+
 ```
 
 
