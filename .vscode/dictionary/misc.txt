@@ -5,3 +5,4 @@ lmfit
 ndarray
 plotly
 pydantic
+pytest

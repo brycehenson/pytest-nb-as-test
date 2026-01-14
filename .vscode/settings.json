@@ -48,12 +48,6 @@
     "cSpell.allowCompoundWords": true,
     // Import custom dictionaries
     "cSpell.customDictionaries": {
-        "physics": {
-            "name": "physics",
-            "path": "./.vscode/dictionary/physics.txt",
-            "scope": "workspace",
-            "addWords": true
-        },
         "misc": {
             "name": "misc",
             "path": "./.vscode/dictionary/misc.txt",
