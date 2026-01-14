@@ -152,7 +152,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     Example:
         pytest_addoption(parser)
     """
-    group = parser.getgroup("notebook-test")
+    group = parser.getgroup("pytest-nb-as-test")
     group.addoption(
         "--notebook-default-all",
         action="store",

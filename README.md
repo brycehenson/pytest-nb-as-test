@@ -55,7 +55,7 @@ They are ignored in markdown cells.
 General form:
 
 ```python
-# notebook-test: <flag>=<value>
+# pytest-nb-as-test: <flag>=<value>
 ```
 
 Rules:
@@ -71,18 +71,18 @@ Rules:
 Sets the default inclusion status for subsequent code cells.
 
 ```python
-# notebook-test: default-all=True|False
+# pytest-nb-as-test: default-all=True|False
 ```
 
 Example:
 
 ```python
-# notebook-test: default-all=False
+# pytest-nb-as-test: default-all=False
 # cells from here are skipped
 
 # ... plotting, exploration, notes ...
 
-# notebook-test: default-all=True
+# pytest-nb-as-test: default-all=True
 # execution resumes
 ```
 
@@ -91,7 +91,7 @@ Example:
 Overrides the current default for the current cell only.
 
 ```python
-# notebook-test: test-cell=True|False
+# pytest-nb-as-test: test-cell=True|False
 ```
 
 ### `must-raise-exception`
@@ -99,7 +99,7 @@ Overrides the current default for the current cell only.
 Marks a cell as expected to raise an exception.
 
 ```python
-# notebook-test: must-raise-exception=True|False
+# pytest-nb-as-test: must-raise-exception=True|False
 ```
 
 If `True`, the cell is executed under `pytest.raises(Exception)`.
@@ -108,7 +108,7 @@ The test fails if no exception is raised, or if a `BaseException` (for example `
 Example:
 
 ```python
-# notebook-test: must-raise-exception=True
+# pytest-nb-as-test: must-raise-exception=True
 raise ValueError("Intentional failure for demonstration")
 ```
 
@@ -119,7 +119,7 @@ Requires `pytest-timeout`.
 Must appear in the first code cell.
 
 ```python
-# notebook-test: notebook-timeout-seconds=<float>
+# pytest-nb-as-test: notebook-timeout-seconds=<float>
 ```
 
 ### `cell-timeout-seconds`
@@ -128,7 +128,7 @@ Sets a per cell timeout (seconds).
 Requires `pytest-timeout`.
 
 ```python
-# notebook-test: cell-timeout-seconds=<float>
+# pytest-nb-as-test: cell-timeout-seconds=<float>
 ```
 
 ## Configuration
@@ -188,7 +188,7 @@ If you pass a directory to `--notebook-keep-generated`, the script is written th
 Each selected cell is preceded by a marker comment:
 
 ```python
-## notebook-test notebook=<filename> cell=<index>
+## pytest-nb-as-test notebook=<filename> cell=<index>
 ```
 
 Use this to correlate tracebacks with notebook cell indices.

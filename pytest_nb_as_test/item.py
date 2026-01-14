@@ -139,7 +139,7 @@ class NotebookFile(pytest.File):
             # parse directives
             directives: Dict[str, Any] = {}
             directive_pattern = (
-                r"^\s{0,4}#\s{0,4}notebook-test\s{0,4}:\s{0,4}"
+                r"^\s{0,4}#\s{0,4}pytest-nb-as-test\s{0,4}:\s{0,4}"
                 r"([\w-]+)\s{0,4}=\s{0,4}(.+?)\s*$"
             )
             for match in re.finditer(
@@ -263,7 +263,8 @@ class NotebookFile(pytest.File):
             # add blank line before each marker comment for readability
             code_lines.append("")
             code_lines.append(
-                indent + f"## notebook-test notebook={self.path.name} cell={cell.index}"
+                indent
+                + f"## pytest-nb-as-test notebook={self.path.name} cell={cell.index}"
             )
             # ensure trailing newline
             if not transformed.endswith("\n"):
