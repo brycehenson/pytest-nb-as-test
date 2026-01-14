@@ -10,6 +10,7 @@ and this project follows Semantic Versioning.
 ## 0.1.5
 - update readme with install instructions
 - change to real pypi
+- fix workflow call
 
 ## 0.1.4
 - change notebook directive base to match package name
