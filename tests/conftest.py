@@ -6,3 +6,5 @@ about the plugin when run inside this package.
 """
 
 pytest_plugins = ["pytester"]
+
+collect_ignore = ["fixture_testing"]
