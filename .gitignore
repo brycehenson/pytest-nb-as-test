@@ -6,3 +6,5 @@ data/
 .pylint_cache
 .coverage
 coverage.lcov
+*.whl
+*.tar.gz
