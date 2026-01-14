@@ -29,7 +29,8 @@
         "njpwerner.autodocstring",
         "Gruntfuggly.todo-tree",
         "dnut.rewrap-revived",
-        "ms-vsliveshare.vsliveshare"
+        "ms-vsliveshare.vsliveshare",
+        "ryanluker.vscode-coverage-gutters"
       ]
     }
   },

@@ -4,3 +4,5 @@ __pycache__/
 data/
 .pylint.d
 .pylint_cache
+.coverage
+coverage.lcov
