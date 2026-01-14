@@ -79,7 +79,7 @@ def test_run_simple_notebook(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "example_simple_123.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest()
+    result = pytester.runpytest_subprocess()
     result.assert_outcomes(passed=1)
 
 
@@ -102,7 +102,7 @@ def test_conftest_autouse_fixture_applies_to_notebooks(
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "example_simple_123.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest()
+    result = pytester.runpytest_subprocess()
     result.assert_outcomes(errors=1)
 
 
@@ -133,7 +133,7 @@ def test_conftest_notebook_marker_behavior(pytester: pytest.Pytester) -> None:
     )
     src = fixture_case_dir / "test_conftest_marker.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest()
+    result = pytester.runpytest_subprocess()
     result.assert_outcomes(passed=2)
 
 
@@ -154,19 +154,15 @@ def test_conftest_notebook_detection_sets_matplotlib_backend(
         pytester.path / "conftest.py",
     )
     shutil.copy2(
-        fixture_case_dir / "matplotlib.py",
-        pytester.path / "matplotlib.py",
-    )
-    shutil.copy2(
         fixture_case_dir / "test_regular_backend.py",
         pytester.path / "test_regular_backend.py",
     )
-    result = pytester.runpytest("test_regular_backend.py")
+    result = pytester.runpytest_subprocess("test_regular_backend.py")
     result.assert_outcomes(passed=1)
 
     src = fixture_case_dir / "test_matplotlib_backend.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest(src.name)
+    result = pytester.runpytest_subprocess(src.name)
     result.assert_outcomes(passed=1)
 
 
@@ -184,7 +180,7 @@ def test_notebook_glob_filters(pytester: pytest.Pytester) -> None:
     shutil.copy2(src, pytester.path / src.name)
     src = notebooks_dir / "test_async_exec_mode.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest("--notebook-glob=example_simple_*.ipynb")
+    result = pytester.runpytest_subprocess("--notebook-glob=example_simple_*.ipynb")
     result.assert_outcomes(passed=1)
 
 
@@ -214,7 +210,7 @@ def test_default_all_directive(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_default_all_false.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest()
+    result = pytester.runpytest_subprocess()
     result.assert_outcomes(passed=1)
 
 
@@ -228,7 +224,7 @@ def test_test_cell_override(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_test_cell_override.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest()
+    result = pytester.runpytest_subprocess()
     result.assert_outcomes(passed=1)
 
 
@@ -243,7 +239,7 @@ def test_must_raise_exception(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_must_raise.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest()
+    result = pytester.runpytest_subprocess()
     result.assert_outcomes(passed=1)
 
 
@@ -263,7 +259,7 @@ def test_strip_line_magics(pytester: pytest.Pytester) -> None:
     # specify a directory for generated scripts
     gen_dir = pytester.path / "generated"
     gen_dir.mkdir()
-    result = pytester.runpytest(f"--notebook-keep-generated={gen_dir}")
+    result = pytester.runpytest_subprocess(f"--notebook-keep-generated={gen_dir}")
     result.assert_outcomes(passed=1)
     # one file should be generated
     gen_files = list(gen_dir.glob("*.py"))
@@ -289,7 +285,7 @@ def test_cli_default_all_false(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "example_simple_123.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest("--notebook-default-all=false")
+    result = pytester.runpytest_subprocess("--notebook-default-all=false")
     result.assert_outcomes(skipped=1)
 
 
@@ -305,7 +301,7 @@ def test_async_exec_mode(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_async_exec_mode.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest()
+    result = pytester.runpytest_subprocess()
     result.assert_outcomes(passed=1)
 
 
@@ -323,7 +319,7 @@ def test_sync_exec_mode(pytester: pytest.Pytester) -> None:
     shutil.copy2(src, pytester.path / src.name)
     gen_dir = pytester.path / "generated"
     gen_dir.mkdir()
-    result = pytester.runpytest(
+    result = pytester.runpytest_subprocess(
         "--notebook-exec-mode=sync",
         f"--notebook-keep-generated={gen_dir}",
     )
@@ -347,7 +343,7 @@ def test_skip_all_directive(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_skip_all.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest()
+    result = pytester.runpytest_subprocess()
     result.assert_outcomes(skipped=1)
 
 
@@ -363,7 +359,7 @@ def test_keep_generated_none(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "error_cases" / "test_failure.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest("--notebook-keep-generated=none")
+    result = pytester.runpytest_subprocess("--notebook-keep-generated=none")
     result.assert_outcomes(failed=1)
     assert "generated notebook script" not in result.stdout.str()
 
@@ -380,7 +376,7 @@ def test_simplified_traceback_shows_failing_cell(pytester: pytest.Pytester) -> N
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "error_cases" / "test_failure_multicell.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest("--notebook-keep-generated=none")
+    result = pytester.runpytest_subprocess("--notebook-keep-generated=none")
     result.assert_outcomes(failed=1)
     output = result.stdout.str()
     assert "Notebook cell failed: test_failure_multicell.ipynb cell=1" in output
@@ -400,7 +396,7 @@ def test_error_line_single_cell(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "error_cases" / "test_failure.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest("-n", "0", "-s", "test_failure.ipynb")
+    result = pytester.runpytest_subprocess("-n", "0", "-s", "test_failure.ipynb")
     result.assert_outcomes(failed=1)
     assert_output_line(result.stdout.str(), '> 1 | raise RuntimeError("boom")')
 
@@ -417,7 +413,9 @@ def test_error_line_multicell(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "error_cases" / "test_failure_multicell.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest("-n", "0", "-s", "test_failure_multicell.ipynb")
+    result = pytester.runpytest_subprocess(
+        "-n", "0", "-s", "test_failure_multicell.ipynb"
+    )
     result.assert_outcomes(failed=1)
     output = result.stdout.str()
     assert_output_line(
@@ -442,7 +440,9 @@ def test_error_line_print_and_error(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "error_cases" / "test_print_and_error.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest("-n", "0", "-s", "test_print_and_error.ipynb")
+    result = pytester.runpytest_subprocess(
+        "-n", "0", "-s", "test_print_and_error.ipynb"
+    )
     result.assert_outcomes(failed=1)
     assert_output_line(
         result.stdout.str(),
@@ -468,7 +468,7 @@ def test_notebook_timeout_directive_first_cell_only(
         / "test_failure_notebook_timeout_not_in_first_cell.ipynb"
     )
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest()
+    result = pytester.runpytest_subprocess()
     result.assert_outcomes(errors=1)
     output = result.stdout.str() + result.stderr.str()
     assert (
@@ -492,7 +492,7 @@ def test_failure_notebook_timeout_reports_pytest_timeout(
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "error_cases" / "test_failure_notebook_timeout.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest(
+    result = pytester.runpytest_subprocess(
         "-n",
         "0",
         "-s",
@@ -522,7 +522,7 @@ def test_failure_cell_timeout_reports_pytest_timeout(
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "error_cases" / "test_failure_cell_timeout.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest(
+    result = pytester.runpytest_subprocess(
         "-n",
         "0",
         "-s",
@@ -550,7 +550,7 @@ def test_cell_timeout_uses_pytest_timeout(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_cell_timeout.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest()
+    result = pytester.runpytest_subprocess()
     result.assert_outcomes(passed=1)
 
 
@@ -567,5 +567,5 @@ def test_notebook_timeout_uses_pytest_timeout(pytester: pytest.Pytester) -> None
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_notebook_timeout.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest()
+    result = pytester.runpytest_subprocess()
     result.assert_outcomes(passed=1)

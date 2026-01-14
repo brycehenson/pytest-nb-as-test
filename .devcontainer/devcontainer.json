@@ -1,5 +1,5 @@
 {
-  "name": "pytest_notebooks",
+  "name": "pytest-nb-as-test",
   "build": {
     "dockerfile": "Dockerfile",
     "context": ".."
@@ -33,9 +33,6 @@
       ]
     }
   },
-  "forwardPorts": [
-    8888
-  ],
   "remoteUser": "vscode",
   "containerEnv": {
     "WorkspaceFolder": "${containerWorkspaceFolder}"

@@ -155,7 +155,8 @@ Precedence order:
 ### pytest.ini / pyproject.toml settings
 
 You can set options in your `pytest.ini` or `pyproject.toml` under
-`[tool.pytest.ini_options]`.  For example:
+`[tool.pytest.ini_options]`. In ini files, use the underscore option names
+(`notebook_default_all`), not the CLI flag form with dashes. For example:
 
 ```ini
 [pytest]
@@ -169,6 +170,10 @@ Values set in the ini file are overridden by command line arguments and
 environment variables as described above.
 
 In `pyproject.toml`, put the same keys under `[tool.pytest.ini_options]`.
+
+Note: `notebook_default_all = false` only changes which cells are selected
+inside notebooks; it does not disable notebook collection. To skip notebook
+tests entirely, use `-m "not notebook"` or `--ignore-glob=*.ipynb` in `addopts`.
 
 
 ## Debugging failures

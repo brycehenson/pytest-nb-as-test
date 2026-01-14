@@ -1,5 +1,15 @@
+"""Tests for non-notebook matplotlib backend handling."""
+
+from typing import Any, cast
+
 import matplotlib
 
 
 def test_regular_backend_unchanged() -> None:
-    assert matplotlib.BACKEND is None
+    """Ensure the backend stays unset for non-notebook tests.
+
+    Example:
+        pytest -k regular_backend
+    """
+    backend = matplotlib.get_backend()
+    assert backend == "SVG"
