@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   pytest:
+    name: pytest
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -33,6 +34,7 @@ jobs:
         run: pytest
 
   pylint:
+    name: pylint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -50,6 +52,7 @@ jobs:
         run: pylint pytest_nb_as_test tests
 
   pyright:
+    name: pyright
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -67,6 +70,7 @@ jobs:
         run: pyright
 
   format:
+    name: format
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
