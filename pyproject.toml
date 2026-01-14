@@ -1,12 +1,18 @@
 [project]
 name = "pytest-nb-as-test"
 version = "0.1.0"
-description = "Lightweight starter template for Python applications and libraries."
+description = "Use notebooks as pytests. Keep your notebooks working."
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
+license = { text = "MIT" }
+license-files = ["LICENSE"]
 authors = [
-    { name = "Bryce Henson", email = "you@example.com" },
+    { name = "Bryce Henson", email = "pytest-nb-as-test+bryce.m.henson@gmail.com" },
 ]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+]
+urls = { Homepage = "https://github.com/brycehenson/pytest-nb-as-test" }
 dependencies = [
     "pytest>=8.4.2,<9.0.0",
     "pytest-timeout>=2.0.0"

@@ -51,7 +51,7 @@ def run_demo() -> int:
     demos = [
         DemoNotebook(
             name="simple",
-            notebook=notebooks_dir / "test_simple.ipynb",
+            notebook=notebooks_dir / "example_simple_123.ipynb",
             cli_args=(),
         ),
         DemoNotebook(
@@ -92,8 +92,6 @@ def run_demo() -> int:
             cmd = [
                 "pytest",
                 "-q",
-                "-p",
-                "pytest_nb_as_test.plugin",
                 str(tmp_path),
                 *resolved_args,
             ]
@@ -107,6 +105,8 @@ def run_demo() -> int:
                 cwd=repo_root,
                 env={
                     **os.environ,
+                    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+                    "PYTEST_PLUGINS": "pytest_nb_as_test.plugin",
                     "PYTHONPATH": f"{repo_root}{os.pathsep}{os.environ.get('PYTHONPATH', '')}",
                 },
             )

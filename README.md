@@ -1,9 +1,10 @@
 # pytest-nb-as-test Plugin
 [![CI pipeline status](https://github.com/brycehenson/pytest_notebook/actions/workflows/ci.yml/badge.svg?job=pytest)](https://github.com/brycehenson/pytest_notebook/actions/workflows/ci.yml)
 
+![icon](icon.png)
 
 In scientific codebases, notebooks are a convenient way to provide executable examples, figures, and LaTeX.
-However, example notebooks often become silently broken as the code evolves because developers rarely re run them.
+However, example notebooks often become silently broken as the code evolves because developers rarely re-run them.
 New users then discover the breakage when they try the examples, which is disheartening and frustrating.
 This plugin executes notebook code cells as `pytest` tests, so example notebooks run in CI and stay up to date.
 
@@ -190,6 +191,20 @@ Each selected cell is preceded by a marker comment:
 ```
 
 Use this to correlate tracebacks with notebook cell indices.
+
+## Versioning / API stability
+
+This project follows Semantic Versioning.
+
+Before 1.0, public APIs may change without notice.
+After 1.0, the following are considered stable public APIs:
+
+- CLI options listed in this README.
+- `pytest.ini` / `pyproject.toml` configuration keys listed in this README.
+- Notebook directives (`default-all`, `test-cell`, `must-raise-exception`, `notebook-timeout-seconds`, `cell-timeout-seconds`).
+
+Behavioral changes to these APIs will be announced in the changelog and, when practical,
+introduced with a deprecation period of at least one minor release.
 
 ## Demo
 
