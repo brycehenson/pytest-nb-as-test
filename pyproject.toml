@@ -10,7 +10,6 @@ authors = [
     { name = "Bryce Henson", email = "pytest-nb-as-test+bryce.m.henson@gmail.com" },
 ]
 classifiers = [
-    "License :: OSI Approved :: MIT License",
 ]
 urls = { Homepage = "https://github.com/brycehenson/pytest-nb-as-test" }
 dependencies = [
