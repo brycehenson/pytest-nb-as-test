@@ -34,8 +34,7 @@ jobs:
       - name: Run pytest
         run: pytest
 
-jobs:
-  pytest:
+  pytest-old-versions:
     name: pytest-old-versions
     runs-on: ubuntu-latest
     steps:
