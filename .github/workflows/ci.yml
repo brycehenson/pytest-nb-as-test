@@ -36,7 +36,7 @@ jobs:
 
 jobs:
   pytest:
-    name: pytest
+    name: pytest-old-versions
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
