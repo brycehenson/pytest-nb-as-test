@@ -11,6 +11,6 @@ repos:
     hooks:
       - id: isort
         name: isort (python)
-        entry: isort -
+        entry: isort
         language: system
         types: [python]

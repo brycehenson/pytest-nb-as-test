@@ -79,7 +79,7 @@ def _comment_out_ipython_magics(source: str) -> str:
     Example:
         _comment_out_ipython_magics("%time\\nx = 1\\n")
     """
-    if re.search(r"(^ {0,5})%%", source, flags=re.MULTILINE):
+    if re.search(r"^[ \t]*%%", source, flags=re.MULTILINE):
         commented_lines: list[str] = []
         for line in source.splitlines(keepends=True):
             if not line.strip():
@@ -89,7 +89,7 @@ def _comment_out_ipython_magics(source: str) -> str:
         return "".join(commented_lines)
 
     return re.sub(
-        r"(^ {0,5})([%!])",
+        r"^([ \t]*)([%!])",
         lambda m: m.group(1) + "#" + m.group(2),
         source,
         flags=re.MULTILINE,

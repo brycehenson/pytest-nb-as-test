@@ -1,5 +1,5 @@
 # pytest-nb-as-test Plugin
-[![CI pipeline status](https://github.com/brycehenson/pytest_notebook/actions/workflows/ci.yml/badge.svg?job=pytest)](https://github.com/brycehenson/pytest_notebook/actions/workflows/ci.yml)
+[![CI pipeline status](https://github.com/brycehenson/pytest-nb-as-test/actions/workflows/ci.yml/badge.svg?job=pytest)](https://github.com/brycehenson/pytest-nb-as-test/actions/workflows/ci.yml)
 
 ![icon](https://github.com/brycehenson/pytest-nb-as-test/blob/main/icon.png)
 
@@ -167,8 +167,8 @@ You can set options in your `pytest.ini` or `pyproject.toml` under
 ```ini
 [pytest]
 notebook_default_all = false
-notebook-timeout-seconds = 120
-notebook-cell-timeout-seconds= 10
+notebook_timeout_seconds = 120
+notebook_cell_timeout_seconds = 10
 
 ```
 

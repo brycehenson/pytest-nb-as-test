@@ -11,7 +11,6 @@ from typing import Any, Callable, Coroutine, Dict, Iterable, cast
 
 import nbformat  # type: ignore
 import pytest  # type: ignore
-from _pytest._code.code import TerminalRepr
 
 from .notebook_code import (
     CellCodeSpan,
@@ -113,7 +112,7 @@ class NotebookFile(pytest.File):
         exec_mode = _resolve_option(config, "notebook_exec_mode", default="async")
         if str(exec_mode).lower() not in {"async", "sync"}:
             raise pytest.UsageError(
-                "--notebook-exec-mode must be 'async' or 'sync', got {exec_mode!r}"
+                f"--notebook-exec-mode must be 'async' or 'sync', got {exec_mode!r}"
             )
 
         notebook_timeout_seconds = _parse_optional_timeout(
@@ -473,7 +472,7 @@ class NotebookItem(pytest.Function):
         lines.append(excinfo.exconly())
         return "\n".join(lines)
 
-    def repr_failure(self, excinfo: pytest.ExceptionInfo) -> str | TerminalRepr:
+    def repr_failure(self, excinfo: pytest.ExceptionInfo) -> str | Any:
         """Called when self.runtest() raises an exception.
 
         We override this method to emit a simplified, cell-focused failure
@@ -498,17 +497,18 @@ class NotebookItem(pytest.Function):
         Example:
             item._dump_generated_code(report)
         """
-        keep = (self._keep_generated or "onfail").lower()
-        if keep == "none":
+        raw_keep = self._keep_generated or "onfail"
+        keep_flag = raw_keep.lower()
+        if keep_flag == "none":
             return
-        if keep == "onfail" and rep.passed:
+        if keep_flag == "onfail" and rep.passed:
             return
-        if keep == "onfail" and rep.when != "call":
+        if keep_flag == "onfail" and rep.when != "call":
             # only attach on call failures
             return
         # if a directory is specified (and not onfail/none)
-        if keep not in {"onfail", "none"}:
-            outdir = Path(keep)
+        if keep_flag not in {"onfail", "none"}:
+            outdir = Path(raw_keep)
             outdir.mkdir(parents=True, exist_ok=True)
             # use notebook name + .py
             outfile = outdir / (self.path.stem + ".py")

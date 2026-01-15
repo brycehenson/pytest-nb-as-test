@@ -165,10 +165,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="store",
         dest="notebook_glob",
         default=None,
-        help=(
-            "Glob pattern for notebook files; applies to --notebook-dir or all discovered "
-            "notebooks."
-        ),
+        help=("Glob pattern for notebook files; applies to all discovered notebooks."),
     )
     group.addoption(
         "--notebook-keep-generated",
