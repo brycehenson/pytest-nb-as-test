@@ -140,10 +140,11 @@ Requires `pytest-timeout`.
 Precedence order:
 
 1. In notebook directives
-2. CLI options
+2. CLI options when explicitly provided
 3. `pytest.ini` or `pyproject.toml`
-4. environment variables (if supported by your config)
-5. defaults
+4. defaults
+
+This plugin does not currently read environment variables for configuration.
 
 ### CLI options
 
@@ -169,17 +170,32 @@ You can set options in your `pytest.ini` or `pyproject.toml` under
 notebook_default_all = false
 notebook_timeout_seconds = 120
 notebook_cell_timeout_seconds = 10
+notebook_glob = test_*.ipynb
 
 ```
 
-Values set in the ini file are overridden by command line arguments and
-environment variables as described above.
+Values set in the ini file are overridden by CLI flags that you pass explicitly.
 
 In `pyproject.toml`, put the same keys under `[tool.pytest.ini_options]`.
 
 Note: `notebook_default_all = false` only changes which cells are selected
 inside notebooks; it does not disable notebook collection. To skip notebook
-tests entirely, use `-m "not notebook"` or `--ignore-glob=*.ipynb` in `addopts`.
+tests entirely, use pytest selection options like `-m "not notebook"` (marker
+expression; this plugin marks notebook items with `notebook`) or
+`--ignore-glob=*.ipynb` (pytest built-in) in `addopts`.
+
+Example (CLI):
+
+```bash
+pytest -m "not notebook"
+```
+
+Example (`pytest.ini`):
+
+```ini
+[pytest]
+addopts = -m "not notebook"
+```
 
 
 ## Debugging failures
