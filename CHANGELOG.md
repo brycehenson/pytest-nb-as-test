@@ -15,7 +15,7 @@ and this project follows Semantic Versioning.
 - fix `--notebook-glob` help text to remove stale `--notebook-dir` reference
 - fix IPython magic stripping for indented lines
 - add test coverage for indented magics
-- avoid private pytest `TerminalRepr` import in item repr annotation
+- fix `repr_failure` type annotation to satisfy pyright without private pytest `TerminalRepr` import
 - move `tool.coverage.run` and `tool.pytest.ini_options` config into `pyproject.toml`
 - accept newer pytest-timeout failure message format in timeout tests
 - integrate pytest-asyncio event loop usage for async notebook execution and update docs
