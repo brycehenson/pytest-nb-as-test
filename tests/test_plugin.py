@@ -15,6 +15,7 @@ import shutil
 import textwrap
 from pathlib import Path
 
+import nbformat
 import pytest
 
 
@@ -343,6 +344,51 @@ def test_async_exec_mode(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_async_exec_mode.ipynb"
     shutil.copy2(src, pytester.path / src.name)
+    result = pytester.runpytest_subprocess()
+    result.assert_outcomes(passed=1)
+
+
+def test_async_exec_mode_with_pytest_asyncio(pytester: pytest.Pytester) -> None:
+    """Use pytest-asyncio's event loop fixture for async notebooks.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_async_exec_mode_with_pytest_asyncio
+    """
+    pytest.importorskip("pytest_asyncio")
+    notebook_path = pytester.path / "test_async_exec_mode_pytest_asyncio.ipynb"
+    notebook = nbformat.v4.new_notebook()
+    notebook.cells = [
+        nbformat.v4.new_code_cell(
+            "import asyncio\n"
+            "\n"
+            "loop = asyncio.get_running_loop()\n"
+            'assert getattr(loop, "_pytest_nb_as_test", False)\n'
+            "\n"
+            "await asyncio.sleep(0)\n"
+            "value = 42"
+        ),
+        nbformat.v4.new_code_cell("assert value == 42"),
+    ]
+    nbformat.write(notebook, notebook_path)
+    conftest = textwrap.dedent(
+        """
+        import asyncio
+        import pytest
+
+        @pytest.fixture
+        def event_loop():
+            loop = asyncio.new_event_loop()
+            loop._pytest_nb_as_test = True
+            asyncio.set_event_loop(loop)
+            yield loop
+            loop.close()
+            asyncio.set_event_loop(None)
+        """
+    ).lstrip()
+    (pytester.path / "conftest.py").write_text(conftest)
     result = pytester.runpytest_subprocess()
     result.assert_outcomes(passed=1)
 

@@ -18,6 +18,7 @@ and this project follows Semantic Versioning.
 - avoid private pytest `TerminalRepr` import in item repr annotation
 - move `tool.coverage.run` and `tool.pytest.ini_options` config into `pyproject.toml`
 - accept newer pytest-timeout failure message format in timeout tests
+- integrate pytest-asyncio event loop usage for async notebook execution and update docs
 
 ## 0.1.5
 - update readme with install instructions
