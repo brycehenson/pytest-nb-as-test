@@ -6,7 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project follows Semantic Versioning.
 
 ## Unreleased
-- expand compatible versions
+
+- expand compatible pytest versions
 - add probe of version compatability
 - fix plotly conftest.py example
 - preserve case for `--notebook-keep-generated` paths
@@ -18,6 +19,7 @@ and this project follows Semantic Versioning.
 - fix `repr_failure` type annotation to satisfy pyright without private pytest `TerminalRepr` import
 - move `tool.coverage.run` and `tool.pytest.ini_options` config into `pyproject.toml`
 - accept newer pytest-timeout failure message format in timeout tests
+- integrate pytest-asyncio event loop usage for async notebook execution and update docs
 
 ## 0.1.5
 - update readme with install instructions

@@ -153,7 +153,7 @@ Precedence order:
 | `--notebook-default-all` | `true` `false` | `true` | Initial value of the `test_all_cells` flag. If `false` then cells without an explicit `test-cell` directive will be skipped until `default-all=True` is encountered. |
 | `--notebook-glob` | string | `none` | Glob pattern for notebook filenames, name-only patterns match basenames, path patterns match relative paths. |
 | `--notebook-keep-generated` | `none` `onfail` `<path>`  | `onfail` | Controls dumping of the generated test script. `none` means never dump, `onfail` dumps the script into the report upon a test failure, any other string is treated as a path and the script is written there with a filename derived from the notebook name. |
-| `--notebook-exec-mode` | `async` `sync` | `async` | Whether to generate `async def` or `def` for the wrapper. If `async`, the plugin marks the test item with `pytest.mark.asyncio` if the `pytest-asyncio` plugin is installed. If `sync`, the code runs synchronously. |
+| `--notebook-exec-mode` | `async` `sync` | `async` | Whether to generate `async def` or `def` for the wrapper. If `async`, the plugin marks the test item with `pytest.mark.asyncio` and uses the pytest-asyncio event loop when the plugin is installed; otherwise it runs the coroutine with `asyncio.run()`. If `sync`, the code runs synchronously. |
 | `--notebook-timeout-seconds` | float | `none` | Wall-clock timeout for an entire notebook, enforced via `pytest-timeout`. |
 | `--notebook-cell-timeout-seconds` | float | `none` | Default per-cell timeout in seconds, enforced via `pytest-timeout`. |
 

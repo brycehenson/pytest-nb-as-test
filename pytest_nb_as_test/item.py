@@ -114,6 +114,9 @@ class NotebookFile(pytest.File):
             raise pytest.UsageError(
                 f"--notebook-exec-mode must be 'async' or 'sync', got {exec_mode!r}"
             )
+        uses_pytest_asyncio = config.pluginmanager.hasplugin(
+            "asyncio"
+        ) or config.pluginmanager.hasplugin("pytest_asyncio")
 
         notebook_timeout_seconds = _parse_optional_timeout(
             _resolve_option(config, "notebook_timeout_seconds", default=""),
@@ -323,6 +326,8 @@ class NotebookFile(pytest.File):
             timeout_config=timeout_config,
             has_timeouts=has_timeouts,
         )
+        if is_async and uses_pytest_asyncio:
+            item.add_marker(pytest.mark.asyncio)
         item.add_marker("notebook")
         return [item]
 
@@ -372,8 +377,8 @@ class NotebookItem(pytest.Function):
 
         This method compiles and executes the generated Python script in an
         isolated namespace. If the wrapper function is asynchronous and
-        pytest-asyncio is not installed, it will use ``asyncio.run()`` to
-        execute the coroutine.
+        pytest-asyncio is installed, it will use the plugin's event loop
+        fixture. Otherwise, it uses ``asyncio.run()`` to execute the coroutine.
 
         Example:
             item.runtest()
@@ -397,10 +402,22 @@ class NotebookItem(pytest.Function):
         if not callable(func):
             return None
         if self._is_async:
-            # if pytest-asyncio is installed, we could rely on its event loop, but
-            # to avoid a hard dependency we just run the coroutine directly.
             async_func = cast(Callable[[], Coroutine[Any, Any, Any]], func)
-            asyncio.run(async_func())
+            uses_pytest_asyncio = self.config.pluginmanager.hasplugin(
+                "asyncio"
+            ) or self.config.pluginmanager.hasplugin("pytest_asyncio")
+            if uses_pytest_asyncio:
+                try:
+                    event_loop = cast(
+                        asyncio.AbstractEventLoop,
+                        self._request.getfixturevalue("event_loop"),
+                    )
+                except pytest.FixtureLookupError:
+                    asyncio.run(async_func())
+                else:
+                    event_loop.run_until_complete(async_func())
+            else:
+                asyncio.run(async_func())
         else:
             func()
         return None
