@@ -156,6 +156,31 @@ def test_conftest_notebook_marker_behavior(pytester: pytest.Pytester) -> None:
     result.assert_outcomes(passed=2)
 
 
+def test_marker_expression_skips_notebooks(pytester: pytest.Pytester) -> None:
+    """Deselect notebook items with a marker expression.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_marker_expression_skips_notebooks
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "example_simple_123.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    test_path = pytester.path / "test_regular.py"
+    test_path.write_text(
+        textwrap.dedent(
+            """
+            def test_regular() -> None:
+                assert True
+            """
+        ).lstrip()
+    )
+    result = pytester.runpytest_subprocess("-m", "not notebook")
+    result.assert_outcomes(passed=1, deselected=1)
+
+
 def test_conftest_notebook_detection_sets_matplotlib_backend(
     pytester: pytest.Pytester,
 ) -> None:
@@ -330,6 +355,33 @@ def test_cli_default_all_false(pytester: pytest.Pytester) -> None:
     shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest_subprocess("--notebook-default-all=false")
     result.assert_outcomes(skipped=1)
+
+
+def test_cli_overrides_ini_default_all(pytester: pytest.Pytester) -> None:
+    """Override ini configuration with a CLI option.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_cli_overrides_ini_default_all
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "example_simple_123.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    pytester.makeini(
+        textwrap.dedent(
+            """
+            [pytest]
+            notebook_default_all = false
+            """
+        ).lstrip()
+    )
+    result = pytester.runpytest_subprocess()
+    result.assert_outcomes(skipped=1)
+
+    result = pytester.runpytest_subprocess("--notebook-default-all=true")
+    result.assert_outcomes(passed=1)
 
 
 def test_async_exec_mode(pytester: pytest.Pytester) -> None:
