@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Probe pytest compatibility across multiple version selections."""
+"""Probe pytest compatibility across multiple version selections.
+TODO:
+- when walking major version once found a fail go to patches and try to resolve the boundary
+
+"""
 from __future__ import annotations
 
 import argparse
@@ -56,6 +60,261 @@ def _venv_python(venv_dir: Path) -> Path:
     return venv_dir / "bin" / "python"
 
 
+def _pyenv_root() -> Optional[str]:
+    """Return the pyenv root directory if it is discoverable.
+
+    This prefers the PYENV_ROOT environment variable, then falls back to the
+    common devcontainer install location at /opt/pyenv if it exists.
+
+    Returns:
+        The pyenv root path, or None if not found.
+
+    Example:
+        root = _pyenv_root()
+    """
+    env_root: Optional[str] = os.environ.get("PYENV_ROOT")
+    if env_root:
+        return env_root
+    default_root: Path = Path("/opt/pyenv")
+    if default_root.exists():
+        return str(default_root)
+    return None
+
+
+def _find_pyenv_executable() -> Optional[str]:
+    """Return a resolved pyenv executable path if available, else None.
+
+    Search order:
+      1) pyenv on PATH
+      2) $PYENV_ROOT/bin/pyenv
+      3) /opt/pyenv/bin/pyenv (if present)
+
+    Returns:
+        Absolute path to pyenv if found, else None.
+
+    Example:
+        pyenv_exe = _find_pyenv_executable()
+    """
+    on_path: Optional[str] = shutil.which("pyenv")
+    if on_path is not None:
+        return on_path
+
+    root: Optional[str] = _pyenv_root()
+    if root is None:
+        return None
+
+    candidate: Path = Path(root) / "bin" / "pyenv"
+    if candidate.exists():
+        return str(candidate)
+    return None
+
+
+def _pyenv_command() -> list[str]:
+    """Return the pyenv command as a list suitable for subprocess calls.
+
+    Returns:
+        A single element list containing the resolved pyenv executable path.
+
+    Raises:
+        RuntimeError: If pyenv cannot be found.
+
+    Example:
+        cmd = _pyenv_command()
+    """
+    exe: Optional[str] = _find_pyenv_executable()
+    if exe is None:
+        raise RuntimeError("pyenv is not available on PATH and PYENV_ROOT is not set.")
+    return [exe]
+
+
+def _pyenv_env(*, pyenv_version: Optional[str] = None) -> dict[str, str]:
+    """Return an environment dictionary suitable for pyenv operations.
+
+    Args:
+        pyenv_version: If provided, set PYENV_VERSION to select the interpreter.
+
+    Returns:
+        Environment dict for subprocess execution.
+
+    Example:
+        env = _pyenv_env(pyenv_version="3.9.18")
+    """
+    env: dict[str, str] = dict(os.environ)
+
+    root: Optional[str] = _pyenv_root()
+    if root is not None:
+        env["PYENV_ROOT"] = root
+        bin_dir: str = str(Path(root) / "bin")
+        shims_dir: str = str(Path(root) / "shims")
+        path_sep: str = os.pathsep
+        env["PATH"] = f"{bin_dir}{path_sep}{shims_dir}{path_sep}{env.get('PATH', '')}"
+
+    if pyenv_version is not None:
+        env["PYENV_VERSION"] = pyenv_version
+
+    return env
+
+
+def _pyenv_latest_patch(version: str) -> str:
+    """Resolve X.Y to the highest available X.Y.Z version in pyenv.
+
+    Args:
+        version: A string in X.Y format.
+
+    Returns:
+        Resolved X.Y.Z string.
+
+    Raises:
+        ValueError: If version is not in X.Y format.
+        RuntimeError: If no matching patch versions are available.
+
+    Example:
+        resolved = _pyenv_latest_patch("3.9")
+    """
+    if re.match(r"^\d+\.\d+$", version) is None:
+        raise ValueError(f"Expected X.Y format (got {version!r}).")
+
+    pyenv_cmd: list[str] = _pyenv_command()
+
+    proc: subprocess.CompletedProcess[str] = _run(
+        [*pyenv_cmd, "install", "--list"],
+        cwd=Path.cwd(),
+        env=_pyenv_env(),
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "Failed to query pyenv install list.\n"
+            f"stdout:\n{proc.stdout}\n\nstderr:\n{proc.stderr}\n"
+        )
+
+    mm: str = version
+    pat: re.Pattern[str] = re.compile(rf"^\s*{re.escape(mm)}\.(?P<patch>\d+)\s*$")
+    best_patch: Optional[int] = None
+    for line in proc.stdout.splitlines():
+        m: Optional[re.Match[str]] = pat.match(line)
+        if m is None:
+            continue
+        patch_i: int = int(m.group("patch"))
+        if best_patch is None or patch_i > best_patch:
+            best_patch = patch_i
+
+    if best_patch is None:
+        raise RuntimeError(f"No pyenv install candidates found for {mm}.")
+    return f"{mm}.{best_patch}"
+
+
+def _pyenv_install(version: str) -> None:
+    """Ensure a pyenv-managed Python version is installed.
+
+    Args:
+        version: A string in X.Y.Z format.
+
+    Raises:
+        RuntimeError: If installation fails.
+
+    Example:
+        _pyenv_install("3.9.18")
+    """
+    proc: subprocess.CompletedProcess[str] = _run(
+        ["whoami"],
+        cwd=Path.cwd(),
+        env=_pyenv_env(),
+        check=False,
+    )
+    print(f"user : {proc.stdout}")
+
+    pyenv_cmd: list[str] = _pyenv_command()
+    print("pyenv installing")
+    combined_command = [*pyenv_cmd, "install", "-s", version]
+    print(" ".join(combined_command))
+    proc: subprocess.CompletedProcess[str] = _run(
+        combined_command,
+        cwd=Path.cwd(),
+        env=_pyenv_env(),
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"pyenv install failed for {version}.\n"
+            f"stdout:\n{proc.stdout}\n\nstderr:\n{proc.stderr}\n"
+        )
+
+    _ = _run(
+        [*pyenv_cmd, "rehash"],
+        cwd=Path.cwd(),
+        env=_pyenv_env(),
+        check=False,
+    )
+
+
+def _pyenv_python(version: str) -> list[str]:
+    """Return the resolved python executable path for a pyenv version.
+
+    Args:
+        version: A string in X.Y.Z format.
+
+    Returns:
+        A single element list containing the python executable path.
+
+    Raises:
+        RuntimeError: If pyenv cannot resolve the python path.
+
+    Example:
+        python_cmd = _pyenv_python("3.9.18")
+    """
+    pyenv_cmd: list[str] = _pyenv_command()
+    proc: subprocess.CompletedProcess[str] = _run(
+        [*pyenv_cmd, "which", "python"],
+        cwd=Path.cwd(),
+        env=_pyenv_env(pyenv_version=version),
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"pyenv could not resolve python for {version}.\n"
+            f"stdout:\n{proc.stdout}\n\nstderr:\n{proc.stderr}\n"
+        )
+
+    resolved: str = proc.stdout.strip().splitlines()[0].strip()
+    if not resolved:
+        raise RuntimeError(f"pyenv returned an empty python path for {version}.")
+    return [resolved]
+
+
+def _interpreter_version(python_exe: str) -> Optional[str]:
+    """Return X.Y.Z version string for a python executable, else None.
+
+    Args:
+        python_exe: Path to a python executable.
+
+    Returns:
+        Version string in X.Y.Z format, or None on failure.
+
+    Example:
+        v = _interpreter_version("/usr/bin/python3.12")
+    """
+    proc: subprocess.CompletedProcess[str] = _run(
+        [
+            python_exe,
+            "-c",
+            (
+                "import sys; "
+                "print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')"
+            ),
+        ],
+        cwd=Path.cwd(),
+        env=os.environ.copy(),
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    out: str = proc.stdout.strip()
+    if re.match(r"^\d+\.\d+\.\d+$", out) is None:
+        return None
+    return out
+
+
 def _resolve_python_cmd(
     python_exe: Optional[str], python_version: Optional[str]
 ) -> list[str]:
@@ -82,8 +341,8 @@ def _resolve_python_cmd(
         return [resolved]
 
     if python_version:
-        match = re.match(
-            r"^(?P<major>\d+)\.(?P<minor>\d+)(?:\.\d+)?$",
+        match: Optional[re.Match[str]] = re.match(
+            r"^(?P<major>\d+)\.(?P<minor>\d+)(?:\.(?P<patch>\d+))?$",
             python_version,
         )
         if match is None:
@@ -91,18 +350,45 @@ def _resolve_python_cmd(
                 "python_version must be in 'X.Y' or 'X.Y.Z' format "
                 f"(got {python_version!r})."
             )
-        major = match.group("major")
-        minor = match.group("minor")
-        candidate = f"python{major}.{minor}"
-        resolved = shutil.which(candidate)
-        if resolved is not None:
-            return [resolved]
+        major: str = match.group("major")
+        minor: str = match.group("minor")
+        patch: Optional[str] = match.group("patch")
+
+        major_minor: str = f"{major}.{minor}"
+
+        candidate: str = f"python{major_minor}"
+        resolved_candidate: Optional[str] = shutil.which(candidate)
+        if resolved_candidate is not None:
+            if patch is None:
+                return [resolved_candidate]
+
+            want: str = f"{major_minor}.{patch}"
+            got: Optional[str] = _interpreter_version(resolved_candidate)
+            if got == want:
+                return [resolved_candidate]
+
         if platform.system().lower().startswith("win"):
             launcher = shutil.which("py")
             if launcher is not None:
                 return [launcher, f"-{major}.{minor}"]
+
+        pyenv_exe: Optional[str] = _find_pyenv_executable()
+        if pyenv_exe is not None:
+            resolved_version: str
+            if patch is None:
+                resolved_version = _pyenv_latest_patch(major_minor)
+            else:
+                resolved_version = f"{major_minor}.{patch}"
+
+            _pyenv_install(resolved_version)
+            return _pyenv_python(resolved_version)
+
+        if patch is None:
+            raise RuntimeError(
+                f"Could not find a Python {major_minor} interpreter on PATH."
+            )
         raise RuntimeError(
-            f"Could not find a Python {major}.{minor} interpreter on PATH."
+            f"Could not find a Python {major_minor}.{patch} interpreter on PATH."
         )
 
     return [sys.executable]
@@ -499,7 +785,12 @@ def main() -> int:
         "--python-version",
         type=str,
         default=None,
-        help="Python version like 3.9 or 3.9.18 (uses pythonX.Y on PATH).",
+        help=(
+            "Python version like 3.9 or 3.9.18. "
+            "First tries pythonX.Y on PATH. "
+            "If not found and pyenv is available, X.Y resolves to latest X.Y.Z, "
+            "the version is installed if missing, then used for venv creation."
+        ),
     )
     parser.add_argument(
         "--dist",
