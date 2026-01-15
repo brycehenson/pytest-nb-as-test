@@ -469,6 +469,7 @@ class NotebookItem(pytest.Function):
         if match_frame is None:
             return None
         line_no = match_frame.lineno
+        assert line_no is not None
         span = self._find_cell_span(line_no)
         if span is None:
             return None
