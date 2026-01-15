@@ -12,7 +12,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import venv
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Sequence
@@ -57,10 +56,82 @@ def _venv_python(venv_dir: Path) -> Path:
     return venv_dir / "bin" / "python"
 
 
-def _make_venv(venv_dir: Path) -> None:
-    """Create a new virtual environment with pip."""
-    builder: venv.EnvBuilder = venv.EnvBuilder(with_pip=True, clear=True, symlinks=True)
-    builder.create(str(venv_dir))
+def _resolve_python_cmd(
+    python_exe: Optional[str], python_version: Optional[str]
+) -> list[str]:
+    """Resolve the python command used to create new venvs.
+
+    Args:
+        python_exe: Explicit python executable path or name on PATH.
+        python_version: Python version string like "3.9" or "3.9.18".
+
+    Returns:
+        Command list to invoke the requested Python interpreter.
+
+    Raises:
+        RuntimeError: When a matching Python interpreter cannot be found.
+        ValueError: When the python_version format is invalid.
+
+    Example:
+        python_cmd = _resolve_python_cmd(None, "3.9")
+    """
+    if python_exe:
+        resolved = shutil.which(python_exe)
+        if resolved is None:
+            raise RuntimeError(f"Python executable {python_exe!r} not found on PATH.")
+        return [resolved]
+
+    if python_version:
+        match = re.match(
+            r"^(?P<major>\d+)\.(?P<minor>\d+)(?:\.\d+)?$",
+            python_version,
+        )
+        if match is None:
+            raise ValueError(
+                "python_version must be in 'X.Y' or 'X.Y.Z' format "
+                f"(got {python_version!r})."
+            )
+        major = match.group("major")
+        minor = match.group("minor")
+        candidate = f"python{major}.{minor}"
+        resolved = shutil.which(candidate)
+        if resolved is not None:
+            return [resolved]
+        if platform.system().lower().startswith("win"):
+            launcher = shutil.which("py")
+            if launcher is not None:
+                return [launcher, f"-{major}.{minor}"]
+        raise RuntimeError(
+            f"Could not find a Python {major}.{minor} interpreter on PATH."
+        )
+
+    return [sys.executable]
+
+
+def _make_venv(venv_dir: Path, python_cmd: Sequence[str]) -> None:
+    """Create a new virtual environment using the requested interpreter.
+
+    Args:
+        venv_dir: Target venv directory path.
+        python_cmd: Command list for the Python interpreter to use.
+
+    Raises:
+        RuntimeError: If the venv creation command fails.
+
+    Example:
+        _make_venv(Path("venv"), ["python3.9"])
+    """
+    proc = _run(
+        [*list(python_cmd), "-m", "venv", str(venv_dir)],
+        cwd=Path.cwd(),
+        env=os.environ.copy(),
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "Failed to create venv.\n"
+            f"stdout:\n{proc.stdout}\n\nstderr:\n{proc.stderr}\n"
+        )
 
 
 def _base_env_for_venv(venv_dir: Path) -> dict[str, str]:
@@ -177,6 +248,7 @@ def probe_pytest_version(
     keep_failed_venv: bool,
     extra_install: Sequence[str],
     pytest_cmd: Sequence[str],
+    python_cmd: Sequence[str],
 ) -> ProbeResult:
     """Create an isolated venv, install dependencies, run pytest, then clean up.
 
@@ -205,7 +277,7 @@ def probe_pytest_version(
     returncode: int = 1
 
     try:
-        _make_venv(venv_dir)
+        _make_venv(venv_dir, python_cmd)
 
         proc: subprocess.CompletedProcess[str]
 
@@ -338,6 +410,7 @@ def _ordered_parallel_probe(
     keep_failed_venv: bool,
     extra_install: Sequence[str],
     pytest_cmd: Sequence[str],
+    python_cmd: Sequence[str],
 ) -> list[ProbeResult]:
     """Probe versions in order, running up to max_workers concurrently.
 
@@ -360,6 +433,7 @@ def _ordered_parallel_probe(
                 keep_failed_venv=keep_failed_venv,
                 extra_install=extra_install,
                 pytest_cmd=pytest_cmd,
+                python_cmd=python_cmd,
             )
 
         while next_submit < len(versions) and len(futures) < max_workers:
@@ -416,6 +490,18 @@ def main() -> int:
         help="Project root directory, default is current working directory.",
     )
     parser.add_argument(
+        "--python",
+        type=str,
+        default=None,
+        help="Python executable path or name on PATH for venv creation.",
+    )
+    parser.add_argument(
+        "--python-version",
+        type=str,
+        default=None,
+        help="Python version like 3.9 or 3.9.18 (uses pythonX.Y on PATH).",
+    )
+    parser.add_argument(
         "--dist",
         type=str,
         default="pytest",
@@ -466,6 +552,9 @@ def main() -> int:
     )
     args: argparse.Namespace = parser.parse_args()
 
+    if args.python and args.python_version:
+        parser.error("Use only one of --python or --python-version.")
+
     project_root: Path = args.project_root.resolve()
     dist_name: str = args.dist
     max_workers: int = int(args.max_workers)
@@ -473,6 +562,7 @@ def main() -> int:
     extra_install: list[str] = list(args.extra_install)
     pytest_cmd: list[str] = ["-m", "pytest", *list(args.pytest_args)]
     stop_on_first_fail: bool = bool(args.stop_on_first_fail)
+    python_cmd: list[str] = _resolve_python_cmd(args.python, args.python_version)
 
     versions: list[str] = _available_versions_via_pip_index(dist_name)
     if args.major_latest_only:
@@ -502,6 +592,7 @@ def main() -> int:
     print(f"Starting probe at: {current_version}")
     print(f"Total available versions: {len(versions)}")
     print(f"Parallel workers: {max_workers}")
+    print(f"Python command for venvs: {' '.join(python_cmd)}")
 
     print(f"\nWalking down from {current_version} to older versions.")
     down_versions: list[str] = versions[current_index:]
@@ -513,6 +604,7 @@ def main() -> int:
         keep_failed_venv=keep_failed_venv,
         extra_install=extra_install,
         pytest_cmd=pytest_cmd,
+        python_cmd=python_cmd,
     )
 
     last_ok: Optional[str] = None
@@ -535,6 +627,7 @@ def main() -> int:
             keep_failed_venv=keep_failed_venv,
             extra_install=extra_install,
             pytest_cmd=pytest_cmd,
+            python_cmd=python_cmd,
         )
 
     print(f"\nLast passing version on downward walk: {last_ok or 'none'}")

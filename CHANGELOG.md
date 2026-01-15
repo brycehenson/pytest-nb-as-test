@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project follows Semantic Versioning.
 
 ## Unreleased
+- stop relying on private pytest traceback internals in notebook failure reporting
+- allow selecting a Python interpreter/version for compatibility probe venvs
 
 ## 0.1.6
 - expand compatible pytest versions

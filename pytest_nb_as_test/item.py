@@ -6,6 +6,7 @@ import asyncio
 import fnmatch
 import os
 import re
+import traceback
 from pathlib import Path
 from typing import Any, Callable, Coroutine, Dict, Iterable, cast
 
@@ -29,14 +30,6 @@ from .timeout import (
     NotebookTimeoutController,
     _has_pytest_timeout_hooks,
 )
-
-
-def _notebook_placeholder() -> None:
-    """Placeholder callable to enable fixture discovery for notebook items.
-
-    Example:
-        _notebook_placeholder()
-    """
 
 
 def pytest_collect_file(
@@ -226,6 +219,7 @@ class NotebookFile(pytest.File):
                 path=self.path,
                 code="",
                 is_async=(str(exec_mode).lower() == "async"),
+                uses_pytest_asyncio=uses_pytest_asyncio,
                 keep_generated=keep_generated,
                 cell_spans=[],
                 timeout_config=timeout_config,
@@ -321,6 +315,7 @@ class NotebookFile(pytest.File):
             path=self.path,
             code=generated_code,
             is_async=is_async,
+            uses_pytest_asyncio=uses_pytest_asyncio,
             keep_generated=keep_generated,
             cell_spans=cell_spans,
             timeout_config=timeout_config,
@@ -336,8 +331,8 @@ class NotebookItem(pytest.Function):
     """A pytest Item representing a single notebook.
 
     Each NotebookItem contains the generated Python code for a notebook and
-    executes it in its ``runtest`` method. The original path and generated code
-    are stored for debugging and report purposes.
+    executes it via a callobj that is either synchronous or asynchronous,
+    depending on execution mode and plugin availability.
 
     Example:
         item = NotebookItem.from_parent(parent, name="example.ipynb::notebook")
@@ -350,12 +345,17 @@ class NotebookItem(pytest.Function):
         path: Path,
         code: str,
         is_async: bool,
+        uses_pytest_asyncio: bool,
         keep_generated: str | None,
         cell_spans: list[CellCodeSpan],
         timeout_config: NotebookTimeoutConfig,
         has_timeouts: bool,
     ) -> None:
-        super().__init__(name, parent, callobj=cast(Any, _notebook_placeholder))
+        if is_async and uses_pytest_asyncio:
+            callobj = self._run_notebook_async
+        else:
+            callobj = self._run_notebook_sync
+        super().__init__(name, parent, callobj=cast(Any, callobj))
         self.path = path
         self._generated_code = code
         self._is_async = is_async
@@ -372,16 +372,15 @@ class NotebookItem(pytest.Function):
         """
         return self.path, 1, self.name
 
-    def runtest(self) -> None:
-        """Execute the generated notebook code.
+    def _load_run_notebook(self) -> Callable[[], Any] | None:
+        """Compile the generated script and return the wrapper function.
 
-        This method compiles and executes the generated Python script in an
-        isolated namespace. If the wrapper function is asynchronous and
-        pytest-asyncio is installed, it will use the plugin's event loop
-        fixture. Otherwise, it uses ``asyncio.run()`` to execute the coroutine.
+        Returns:
+            The ``run_notebook`` callable from the generated code, or None when
+            no callable was defined.
 
         Example:
-            item.runtest()
+            func = item._load_run_notebook()
         """
         namespace: Dict[str, Any] = {
             "__name__": "__notebook__",
@@ -393,34 +392,40 @@ class NotebookItem(pytest.Function):
             has_timeouts=self._has_timeouts,
         )
         namespace["__notebook_timeout__"] = timeout_controller.cell_timeout_context
-        # compile code with filename for clearer tracebacks
         code_obj = compile(self._generated_code, filename=str(self.path), mode="exec")
-        # execute definitions
         exec(code_obj, namespace)  # pylint: disable=exec-used
-        # run wrapper
         func = namespace.get("run_notebook")
         if not callable(func):
             return None
+        return cast(Callable[[], Any], func)
+
+    def _run_notebook_sync(self) -> None:
+        """Execute the generated notebook with synchronous control flow.
+
+        Example:
+            item._run_notebook_sync()
+        """
+        func = self._load_run_notebook()
+        if func is None:
+            return None
         if self._is_async:
             async_func = cast(Callable[[], Coroutine[Any, Any, Any]], func)
-            uses_pytest_asyncio = self.config.pluginmanager.hasplugin(
-                "asyncio"
-            ) or self.config.pluginmanager.hasplugin("pytest_asyncio")
-            if uses_pytest_asyncio:
-                try:
-                    event_loop = cast(
-                        asyncio.AbstractEventLoop,
-                        self._request.getfixturevalue("event_loop"),
-                    )
-                except pytest.FixtureLookupError:
-                    asyncio.run(async_func())
-                else:
-                    event_loop.run_until_complete(async_func())
-            else:
-                asyncio.run(async_func())
+            asyncio.run(async_func())
         else:
             func()
         return None
+
+    async def _run_notebook_async(self) -> None:
+        """Execute the generated notebook under pytest-asyncio.
+
+        Example:
+            await item._run_notebook_async()
+        """
+        func = self._load_run_notebook()
+        if func is None:
+            return None
+        async_func = cast(Callable[[], Coroutine[Any, Any, Any]], func)
+        await async_func()
 
     def _find_cell_span(self, line_no: int) -> CellCodeSpan | None:
         """Find the cell span that contains a generated line number.
@@ -453,21 +458,17 @@ class NotebookItem(pytest.Function):
         """
         if not self._cell_spans:
             return None
-        if not excinfo.traceback:
+        if excinfo.tb is None:
             return None
-        notebook_path = str(self.path)
-        match_entry = None
-        for entry in reversed(excinfo.traceback):
-            if str(entry.path) == notebook_path:
-                match_entry = entry
+        notebook_path = os.path.abspath(str(self.path))
+        match_frame = None
+        for frame in reversed(traceback.extract_tb(excinfo.tb)):
+            if os.path.abspath(frame.filename) == notebook_path:
+                match_frame = frame
                 break
-        if match_entry is None:
+        if match_frame is None:
             return None
-        raw_entry = getattr(match_entry, "_rawentry", None)
-        if raw_entry is not None and getattr(raw_entry, "tb_lineno", None):
-            line_no = raw_entry.tb_lineno
-        else:
-            line_no = match_entry.lineno
+        line_no = match_frame.lineno
         span = self._find_cell_span(line_no)
         if span is None:
             return None
@@ -490,7 +491,7 @@ class NotebookItem(pytest.Function):
         return "\n".join(lines)
 
     def repr_failure(self, excinfo: pytest.ExceptionInfo) -> str | Any:
-        """Called when self.runtest() raises an exception.
+        """Called when the test raises an exception.
 
         We override this method to emit a simplified, cell-focused failure
         message when possible, falling back to the default formatting.
