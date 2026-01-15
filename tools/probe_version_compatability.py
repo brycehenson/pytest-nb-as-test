@@ -15,7 +15,7 @@ import time
 import venv
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Optional, Sequence
 
 
 @dataclass(frozen=True)
@@ -449,6 +449,21 @@ def main() -> int:
         action="store_true",
         help="Probe only the newest version for each major series.",
     )
+    parser.add_argument(
+        "--stop-on-first-fail",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Stop probing on the first failure.",
+    )
+    parser.add_argument(
+        "--start-version",
+        type=str,
+        default=None,
+        help=(
+            "Version to start probing from. Defaults to the installed version, "
+            "falling back to the newest available."
+        ),
+    )
     args: argparse.Namespace = parser.parse_args()
 
     project_root: Path = args.project_root.resolve()
@@ -457,14 +472,17 @@ def main() -> int:
     keep_failed_venv: bool = bool(args.keep_failed_venv)
     extra_install: list[str] = list(args.extra_install)
     pytest_cmd: list[str] = ["-m", "pytest", *list(args.pytest_args)]
+    stop_on_first_fail: bool = bool(args.stop_on_first_fail)
 
     versions: list[str] = _available_versions_via_pip_index(dist_name)
     if args.major_latest_only:
         versions = _latest_per_major(versions)
     installed: Optional[str] = _current_installed_version(dist_name)
 
-    if installed is None:
-        current_version: str = versions[0]
+    if args.start_version is not None:
+        current_version = args.start_version
+    elif installed is None:
+        current_version = versions[0]
     else:
         current_version = installed
 
@@ -474,8 +492,11 @@ def main() -> int:
             current_index = i
             break
     else:
-        current_index = 0
-        current_version = versions[0]
+        print(
+            f"Requested start version {current_version!r} not found in available "
+            f"versions for {dist_name}."
+        )
+        return 2
 
     print(f"Current {dist_name} version (this interpreter): {installed or 'none'}")
     print(f"Starting probe at: {current_version}")
@@ -488,7 +509,7 @@ def main() -> int:
         versions=down_versions,
         project_root=project_root,
         max_workers=max_workers,
-        stop_on_first_fail=True,
+        stop_on_first_fail=stop_on_first_fail,
         keep_failed_venv=keep_failed_venv,
         extra_install=extra_install,
         pytest_cmd=pytest_cmd,
@@ -510,7 +531,7 @@ def main() -> int:
             versions=up_versions,
             project_root=project_root,
             max_workers=max_workers,
-            stop_on_first_fail=False,
+            stop_on_first_fail=stop_on_first_fail,
             keep_failed_venv=keep_failed_venv,
             extra_install=extra_install,
             pytest_cmd=pytest_cmd,

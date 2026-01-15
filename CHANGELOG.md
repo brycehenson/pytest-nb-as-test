@@ -9,6 +9,15 @@ and this project follows Semantic Versioning.
 - expand compatible versions
 - add probe of version compatability
 - fix plotly conftest.py example
+- preserve case for `--notebook-keep-generated` paths
+- fix `--notebook-exec-mode` error message interpolation
+- fix README CI badge link to correct repository
+- fix `--notebook-glob` help text to remove stale `--notebook-dir` reference
+- fix IPython magic stripping for indented lines
+- add test coverage for indented magics
+- avoid private pytest `TerminalRepr` import in item repr annotation
+- move `tool.coverage.run` and `tool.pytest.ini_options` config into `pyproject.toml`
+- accept newer pytest-timeout failure message format in timeout tests
 
 ## 0.1.5
 - update readme with install instructions

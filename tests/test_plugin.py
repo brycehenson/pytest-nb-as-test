@@ -64,11 +64,15 @@ def assert_pytest_timeout_line(
             tolerance_fraction=0.3,
         )
     """
-    pattern = re.compile(
+    pattern = re.compile(r"^Failed: Timeout >(?P<seconds>\d+(?:\.\d+)?)s$")
+    legacy_pattern = re.compile(
         r"^Failed: Timeout \(>(?P<seconds>\d+(?:\.\d+)?)s\) from pytest-timeout\.$"
     )
     for line in output.splitlines():
         match = pattern.match(line)
+        if match is None:
+            # Older pytest-timeout versions include extra context in the failure line.
+            match = legacy_pattern.match(line)
         if match:
             seconds = float(match.group("seconds"))
             lower = expected_seconds * (1.0 - tolerance_fraction)
@@ -290,6 +294,27 @@ def test_strip_line_magics(pytester: pytest.Pytester) -> None:
     assert '#!echo "shell escape"' in content
     assert 'print("after shell")' in content
     assert '#print("after shell")' not in content
+
+
+def test_strip_indented_magics(pytester: pytest.Pytester) -> None:
+    """Verify that indented IPython magics are commented out.
+
+    The notebook ``test_indented_magics.ipynb`` contains magics inside an
+    indented block. The generated script should comment them out so the
+    code remains valid Python.
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "test_indented_magics.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    gen_dir = pytester.path / "generated"
+    gen_dir.mkdir()
+    result = pytester.runpytest_subprocess(f"--notebook-keep-generated={gen_dir}")
+    result.assert_outcomes(passed=1)
+    gen_files = list(gen_dir.glob("*.py"))
+    assert gen_files, "No generated script produced"
+    content = gen_files[0].read_text()
+    assert "#%time" in content
+    assert '#!echo "hello from shell"' in content
 
 
 def test_cli_default_all_false(pytester: pytest.Pytester) -> None:
