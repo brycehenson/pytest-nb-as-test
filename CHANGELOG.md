@@ -7,6 +7,7 @@ and this project follows Semantic Versioning.
 
 ## Unreleased
 
+## 0.1.6
 - expand compatible pytest versions
 - add probe of version compatability
 - fix plotly conftest.py example
