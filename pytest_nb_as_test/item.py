@@ -472,7 +472,7 @@ class NotebookItem(pytest.Function):
         lines.append(excinfo.exconly())
         return "\n".join(lines)
 
-    def repr_failure(self, excinfo: pytest.ExceptionInfo) -> str | object:
+    def repr_failure(self, excinfo: pytest.ExceptionInfo) -> str | Any:
         """Called when self.runtest() raises an exception.
 
         We override this method to emit a simplified, cell-focused failure
