@@ -744,6 +744,7 @@ def _setup_pytest_environment(
 
     except Exception as e:
         return PreparedEnvironment(
+            dist_name=dist_name,
             version=version,
             venv_dir=venv_dir,
             python_exe=vpy,
