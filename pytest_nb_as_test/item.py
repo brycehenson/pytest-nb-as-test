@@ -380,7 +380,8 @@ class NotebookItem(pytest.Function):
         # - Async code is executed via asyncio.run() inside self._run_notebook_sync
         # This approach sidesteps pytest-asyncio integration issues while remaining
         # compliant with the documented behavior.
-        super().__init__(name, parent, callobj=self._run_notebook_sync)
+        super().__init__(name, parent, callobj=cast(Any, self._run_notebook_sync))
+        # TODO: this cast is a mypy workaround; consider refactoring callobj typing
         self.path = path
         self._generated_code = code
         self._is_async = is_async
