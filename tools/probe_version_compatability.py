@@ -74,7 +74,7 @@ class PreparedEnvironment:
     """
 
     dist_name: str
-
+    """ name of the distribution being tested."""
     version: str
     """Version string being tested."""
     venv_dir: Path
