@@ -7,6 +7,9 @@ Features:
   when a failure is found.
 
 TODO:
+- verify desired version is installed before running tests
+- have seperate controls for setup and run workers
+
 - I want to split this into
   - runner
     - env setup
@@ -69,6 +72,8 @@ class PreparedEnvironment:
             install_stderr=""
         )
     """
+
+    dist_name: str
 
     version: str
     """Version string being tested."""
@@ -671,6 +676,7 @@ def _setup_pytest_environment(
         install_stderr.append(proc.stderr)
         if proc.returncode != 0:
             return PreparedEnvironment(
+                dist_name=dist_name,
                 version=version,
                 venv_dir=venv_dir,
                 python_exe=vpy,
@@ -681,7 +687,14 @@ def _setup_pytest_environment(
 
         # Install main dist package with extras
         proc = _run(
-            [str(vpy), "-m", "pip", "install", "-U", f"{dist_name}=={version}"],
+            [
+                str(vpy),
+                "-m",
+                "pip",
+                "install",
+                f"{dist_name}=={version}",
+                *list(extra_install),
+            ],
             cwd=project_root,
             env=env,
             check=False,
@@ -689,6 +702,7 @@ def _setup_pytest_environment(
         install_stderr.append(proc.stderr)
         if proc.returncode != 0:
             return PreparedEnvironment(
+                dist_name=dist_name,
                 version=version,
                 venv_dir=venv_dir,
                 python_exe=vpy,
@@ -697,28 +711,9 @@ def _setup_pytest_environment(
                 install_stderr="".join(install_stderr),
             )
 
-        # Install extra packages
-        if extra_install:
-            proc = _run(
-                [str(vpy), "-m", "pip", "install", *list(extra_install)],
-                cwd=project_root,
-                env=env,
-                check=False,
-            )
-            install_stderr.append(proc.stderr)
-            if proc.returncode != 0:
-                return PreparedEnvironment(
-                    version=version,
-                    venv_dir=venv_dir,
-                    python_exe=vpy,
-                    setup_passed=False,
-                    setup_error=f"extra package install failed: {proc.stderr}",
-                    install_stderr="".join(install_stderr),
-                )
-
         # Install project in editable mode
         proc = _run(
-            [str(vpy), "-m", "pip", "install", "-e", "."],
+            [str(vpy), "-m", "pip", "install", "-e", ".", "--no-deps"],
             cwd=project_root,
             env=env,
             check=False,
@@ -726,6 +721,7 @@ def _setup_pytest_environment(
         install_stderr.append(proc.stderr)
         if proc.returncode != 0:
             return PreparedEnvironment(
+                dist_name=dist_name,
                 version=version,
                 venv_dir=venv_dir,
                 python_exe=vpy,
@@ -737,6 +733,7 @@ def _setup_pytest_environment(
         time.sleep(0.5)
 
         return PreparedEnvironment(
+            dist_name=dist_name,
             version=version,
             venv_dir=venv_dir,
             python_exe=vpy,
@@ -817,6 +814,26 @@ def _run_pytest_in_environment(
                 venv_dir=venv_dir,
                 stdout="",
                 stderr=prepared_env.setup_error or "Unknown setup error",
+            )
+
+        dist_name = prepared_env.dist_name
+        ver_proc = _run(
+            [str(vpy), "-c", f"import {dist_name}; print({dist_name}.__version__)"],
+            cwd=project_root,
+            env=env,
+            check=False,
+        )
+        ver_str = ver_proc.stdout.strip()
+        print(f"{dist_name} {ver_str}")
+        if ver_proc.returncode != 0 or ver_str != prepared_env.version:
+            return ProbeResult(
+                version=prepared_env.version,
+                passed=False,
+                returncode=1,
+                duration_s=time.time() - t0,
+                venv_dir=venv_dir,
+                stdout=ver_proc.stdout,
+                stderr=f"Version drift: expected {dist_name} {prepared_env.version}, got {ver_proc.stdout.strip()!r}\n{ver_proc.stderr}",
             )
 
         cache_dir: str = f"/tmp/pytest_cache/{prepared_env.version}"
@@ -980,7 +997,7 @@ def _pipelined_parallel_probe(
     results: list[Optional[ProbeResult]] = [None] * n_versions
     stop_event: threading.Event = threading.Event()
 
-    num_setup_workers: int = max(1, max_workers // 2)
+    num_setup_workers: int = 15  # max(1, max_workers * 2)
     next_setup_index: int = 0
     setup_lock: threading.Lock = threading.Lock()
 
