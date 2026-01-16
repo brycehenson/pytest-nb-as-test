@@ -55,10 +55,7 @@ def pytest_collect_file(  # type: ignore[override]
     """
     raw_path: Any = kwargs.get("file_path", path)
 
-    try:
-        file_path: Path = Path(str(raw_path))
-    except Exception:
-        return None
+    file_path: Path = Path(str(raw_path))
 
     if file_path.suffix != ".ipynb":
         return None
