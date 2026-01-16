@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project follows Semantic Versioning.
 
 ## Unreleased
+- change default `--notebook-exec-mode` from `async` to `auto` for intelligent execution mode detection
+- implement auto-detection of `await` statements to generate async wrappers only when needed, avoiding unnecessary asyncio overhead for synchronous notebooks
+- refactor execution path to use universal sync handler that intelligently executes both sync and async code
 - stop relying on private pytest traceback internals in notebook failure reporting
 - allow selecting a Python interpreter/version for compatibility probe venvs
 

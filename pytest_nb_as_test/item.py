@@ -102,10 +102,10 @@ class NotebookFile(pytest.File):
             default="onfail",
             cli_flag="--notebook-keep-generated",
         )
-        exec_mode = _resolve_option(config, "notebook_exec_mode", default="async")
-        if str(exec_mode).lower() not in {"async", "sync"}:
+        exec_mode = _resolve_option(config, "notebook_exec_mode", default="auto")
+        if str(exec_mode).lower() not in {"auto", "async", "sync"}:
             raise pytest.UsageError(
-                f"--notebook-exec-mode must be 'async' or 'sync', got {exec_mode!r}"
+                f"--notebook-exec-mode must be 'auto', 'async' or 'sync', got {exec_mode!r}"
             )
         uses_pytest_asyncio = config.pluginmanager.hasplugin(
             "asyncio"
@@ -250,7 +250,21 @@ class NotebookFile(pytest.File):
         # minimal prelude; runtime setup belongs in conftest fixtures
         code_lines.append("import pytest")
         # define wrapper function
-        is_async = str(exec_mode).lower() == "async"
+        # determine execution mode: auto (detect await), async (force), or sync (force)
+        exec_mode_lower = str(exec_mode).lower()
+        has_await = False
+        # scan prepared cells for 'await' keyword for 'auto' mode decision
+        for _, transformed in prepared_cells:
+            if re.search(r"\bawait\b", transformed):
+                has_await = True
+                break
+        # determine if async based on mode
+        if exec_mode_lower == "async":
+            is_async = True
+        elif exec_mode_lower == "auto":
+            is_async = has_await
+        else:  # sync mode
+            is_async = False
         wrapper_def = "async def run_notebook():" if is_async else "def run_notebook():"
         code_lines.append(wrapper_def)
         # indent subsequent code by 4 spaces
@@ -321,8 +335,19 @@ class NotebookFile(pytest.File):
             timeout_config=timeout_config,
             has_timeouts=has_timeouts,
         )
+        # Mark with @pytest.mark.asyncio only if:
+        # 1. Code is async, AND
+        # 2. pytest-asyncio is installed, AND
+        # 3. pytest-asyncio is NOT in auto mode (auto mode doesn't work well with bound methods)
         if is_async and uses_pytest_asyncio:
-            item.add_marker(pytest.mark.asyncio)
+            asyncio_mode = None
+            try:
+                asyncio_mode = self.config.getini("asyncio_mode")
+            except (AttributeError, ValueError):
+                pass
+            # Only mark if not in auto mode, or if we can't determine the mode
+            if asyncio_mode != "auto":
+                item.add_marker(pytest.mark.asyncio)
         item.add_marker("notebook")
         return [item]
 
@@ -351,11 +376,12 @@ class NotebookItem(pytest.Function):
         timeout_config: NotebookTimeoutConfig,
         has_timeouts: bool,
     ) -> None:
-        if is_async and uses_pytest_asyncio:
-            callobj = self._run_notebook_async
-        else:
-            callobj = self._run_notebook_sync
-        super().__init__(name, parent, callobj=cast(Any, callobj))
+        # Always use sync execution path. This works for both sync and async code:
+        # - Sync code runs directly via self._run_notebook_sync
+        # - Async code is executed via asyncio.run() inside self._run_notebook_sync
+        # This approach sidesteps pytest-asyncio integration issues while remaining
+        # compliant with the documented behavior.
+        super().__init__(name, parent, callobj=self._run_notebook_sync)
         self.path = path
         self._generated_code = code
         self._is_async = is_async

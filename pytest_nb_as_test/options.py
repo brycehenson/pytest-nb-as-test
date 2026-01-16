@@ -179,7 +179,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="store",
         dest="notebook_exec_mode",
         default=None,
-        help="Execution mode for notebooks: 'async' (default) or 'sync'.",
+        help="Execution mode for notebooks: 'auto' (default), 'async', or 'sync'.",
     )
     group.addoption(
         "--notebook-timeout-seconds",
@@ -214,8 +214,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
     parser.addini(
         "notebook_exec_mode",
-        default="async",
-        help="Execution mode for notebooks (async/sync).",
+        default="auto",
+        help="Execution mode for notebooks (auto/async/sync).",
     )
     parser.addini(
         "notebook_timeout_seconds",
