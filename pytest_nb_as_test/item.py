@@ -38,21 +38,6 @@ def pytest_collect_file(  # type: ignore[override]
     path: Any,
     **kwargs: Any,
 ) -> pytest.File | None:
-    """Collect Jupyter notebook files as pytest items.
-
-    This hook is called by pytest for each file discovered during test
-    collection. If the file has a `.ipynb` suffix and passes the configured
-    directory and glob filters, it is wrapped in a ``NotebookFile``. Otherwise
-    collection proceeds normally.
-
-    Args:
-        parent: Parent pytest collector.
-        path: Candidate path from pytest (type varies across pytest versions).
-        **kwargs: Additional hook arguments from pytest (varies across versions).
-
-    Returns:
-        A NotebookFile when the notebook should be collected, otherwise None.
-    """
     raw_path: Any = kwargs.get("file_path", path)
 
     try:
@@ -66,7 +51,6 @@ def pytest_collect_file(  # type: ignore[override]
     config = parent.config
     notebook_glob = _resolve_option(config, "notebook_glob", default=None)
     if notebook_glob:
-        # Apply path-containing globs to the relative path, otherwise match basename.
         if "/" in notebook_glob or os.sep in notebook_glob:
             if not file_path.match(str(notebook_glob)):
                 return None
@@ -74,7 +58,23 @@ def pytest_collect_file(  # type: ignore[override]
             if not fnmatch.fnmatch(file_path.name, notebook_glob):
                 return None
 
-    return NotebookFile.from_parent(parent=parent, path=file_path)
+    from_parent_params: set[str] = set(
+        inspect.signature(NotebookFile.from_parent).parameters.keys()
+    )
+
+    if "path" in from_parent_params:
+        return NotebookFile.from_parent(parent=parent, path=file_path)
+
+    # pytest<=6 expects fspath=py.path.local(...)
+    if "fspath" in from_parent_params:
+        import py  # type: ignore
+
+        return NotebookFile.from_parent(
+            parent=parent, fspath=py.path.local(str(file_path))
+        )
+
+    # Should not happen, but fail closed
+    return None
 
 
 class NotebookFile(pytest.File):
@@ -385,18 +385,19 @@ class NotebookItem(pytest.Function):
 
         # pytest may inject kwargs intended for *your* node (or for other plugins),
         # but pytest.Function.__init__ will reject unknown ones.
-        # TODO: this is messy and i would rather not do it this way
+        # this is messy and i would rather not do it this way
         base_kwargs: dict[str, Any] = {
             k: v for k, v in kwargs.items() if k in self._BASE_INIT_KW
         }
 
+        # this cast is a mypy workaround; consider refactoring callobj typing
         super().__init__(
             name=name,
             parent=parent,
             callobj=cast(Any, self._run_notebook_sync),
             **base_kwargs,
         )
-        # TODO: this cast is a mypy workaround; consider refactoring callobj typing
+
         self.path = path
         self._generated_code = code
         self._is_async = is_async
