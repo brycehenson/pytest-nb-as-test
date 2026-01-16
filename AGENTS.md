@@ -15,6 +15,7 @@ These notes capture repository-wide expectations for future automation runs once
 - Keep public and private functions/classes documented with Google-style docstrings, include an "Example" heading which shows the basic usage of a function or method.
 - Document private methods that implement non-trivial logic or define subclass contracts, using the same Args/Returns/Example style as public methods.
 - Isolate side effects at the service layer; keep utilities and pipelines pure so they are easy to test.
+- Avoid using private APIs from other packages; rely on documented, public interfaces unless explicitly required and approved.
 - Avoid very short internal helper functions with trivial logic used only once; keep that code inline at the call site and add a brief comment when it improves clarity.
 - Avoid raw string options; use `Enum` or `Literal` for finite option sets and convert/validate early.
 - Use enums or dataclasses when a group of related values travels together instead of loosely-coupled dictionaries.
@@ -43,4 +44,3 @@ class LocalFieldSource(FieldSource, ABC):
 - If you create or edit runnable scripts or modules, run a minimal invocation of the code to validate it executes.
 - If you create or edit notebooks, execute them end-to-end and report the outcome.
 - Always report lint/test/notebook execution results in the final response, and explicitly call out any skips with reasons.
-

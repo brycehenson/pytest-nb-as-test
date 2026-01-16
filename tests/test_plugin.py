@@ -15,7 +15,6 @@ import shutil
 import textwrap
 from pathlib import Path
 
-import nbformat
 import pytest
 
 
@@ -400,49 +399,51 @@ def test_async_exec_mode(pytester: pytest.Pytester) -> None:
     result.assert_outcomes(passed=1)
 
 
-def test_async_exec_mode_with_pytest_asyncio(pytester: pytest.Pytester) -> None:
-    """Use pytest-asyncio's event loop fixture for async notebooks.
+def test_auto_exec_mode(pytester: pytest.Pytester) -> None:
+    """Exercise auto execution mode with both sync and async notebooks.
+
+    Auto mode detects 'await' statements and generates async wrappers only
+    when needed, avoiding unnecessary asyncio overhead for synchronous notebooks.
 
     Args:
         pytester: Pytest fixture for running tests in a temporary workspace.
 
     Example:
-        pytest -k test_async_exec_mode_with_pytest_asyncio
+        pytest -k test_auto_exec_mode
     """
-    pytest.importorskip("pytest_asyncio")
-    notebook_path = pytester.path / "test_async_exec_mode_pytest_asyncio.ipynb"
-    notebook = nbformat.v4.new_notebook()
-    notebook.cells = [
-        nbformat.v4.new_code_cell(
-            "import asyncio\n"
-            "\n"
-            "loop = asyncio.get_running_loop()\n"
-            'assert getattr(loop, "_pytest_nb_as_test", False)\n'
-            "\n"
-            "await asyncio.sleep(0)\n"
-            "value = 42"
-        ),
-        nbformat.v4.new_code_cell("assert value == 42"),
-    ]
-    nbformat.write(notebook, notebook_path)
-    conftest = textwrap.dedent(
-        """
-        import asyncio
-        import pytest
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    # Copy both notebooks to the temp directory
+    sync_src = notebooks_dir / "example_simple_123.ipynb"
+    async_src = notebooks_dir / "test_async_exec_mode.ipynb"
+    shutil.copy2(sync_src, pytester.path / sync_src.name)
+    shutil.copy2(async_src, pytester.path / async_src.name)
+    gen_dir = pytester.path / "generated"
+    gen_dir.mkdir()
 
-        @pytest.fixture
-        def event_loop():
-            loop = asyncio.new_event_loop()
-            loop._pytest_nb_as_test = True
-            asyncio.set_event_loop(loop)
-            yield loop
-            loop.close()
-            asyncio.set_event_loop(None)
-        """
-    ).lstrip()
-    (pytester.path / "conftest.py").write_text(conftest)
-    result = pytester.runpytest_subprocess()
+    # Test sync notebook with auto mode (should generate sync wrapper)
+    result = pytester.runpytest_subprocess(
+        "--notebook-exec-mode=auto",
+        "--notebook-glob=example_simple_123.ipynb",
+        f"--notebook-keep-generated={gen_dir}",
+    )
     result.assert_outcomes(passed=1)
+    gen_files = list(gen_dir.glob("*simple_123*.py"))
+    assert gen_files, "No generated script for sync notebook produced"
+    sync_content = gen_files[0].read_text()
+    assert "def run_notebook():" in sync_content
+    assert "async def run_notebook():" not in sync_content
+
+    # Test async notebook with auto mode (should generate async wrapper)
+    result = pytester.runpytest_subprocess(
+        "--notebook-exec-mode=auto",
+        "--notebook-glob=test_async_exec_mode.ipynb",
+        f"--notebook-keep-generated={gen_dir}",
+    )
+    result.assert_outcomes(passed=1)
+    gen_files = list(gen_dir.glob("*async_exec_mode*.py"))
+    assert gen_files, "No generated script for async notebook produced"
+    async_content = gen_files[0].read_text()
+    assert "async def run_notebook():" in async_content
 
 
 def test_sync_exec_mode(pytester: pytest.Pytester) -> None:

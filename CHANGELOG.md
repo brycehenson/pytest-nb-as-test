@@ -7,6 +7,17 @@ and this project follows Semantic Versioning.
 
 ## Unreleased
 
+## 0.1.7
+-  found error with pytest 7.1.0 and excluded it, broadened pytest
+  versions  "pytest>=2.1.0,<9.0.2,!=7.1.0,!=3.2.4,!=2.0.3"
+- change default `--notebook-exec-mode` from `async` to `auto` for intelligent execution mode detection
+- implement auto-detection of `await` statements to generate async wrappers only when needed, avoiding unnecessary asyncio overhead for synchronous notebooks
+- refactor execution path to use universal sync handler that intelligently executes both sync and async code
+- stop relying on private pytest traceback internals in notebook failure reporting
+- testing:
+  - allow selecting a Python interpreter/version for compatibility probe venvs
+  - improved `tools/probe_version_compatability.py`,
+
 ## 0.1.6
 - expand compatible pytest versions
 - add probe of version compatability
