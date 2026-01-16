@@ -3,7 +3,7 @@ name = "pytest-nb-as-test"
 version = "0.1.6"
 description = "Use notebooks as pytests. Keep your notebooks working."
 readme = "README.md"
-requires-python = ">=3.10,<4.0"
+requires-python = ">=3.10,<3.15"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
@@ -13,9 +13,9 @@ classifiers = [
 ]
 urls = { Homepage = "https://github.com/brycehenson/pytest-nb-as-test" }
 dependencies = [
-    "pytest>=7.1.1,<9.0.2",
+    "pytest>=2.1.0,<9.1.0,!=7.1.0,!=3.2.4,!=2.0.3",
     "pytest-timeout>=2.0.0",
-    "nbformat"
+    "nbformat>=5.0.2,"
 ]
 
 [project.optional-dependencies]

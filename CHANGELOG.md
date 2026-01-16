@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project follows Semantic Versioning.
 
 ## Unreleased
+- improved `tools/probe_version_compatability.py`, found error with pytest 7.1.0 and excluded it, broadened pytest
+  versions  "pytest>=2.1.0,<9.0.2,!=7.1.0,!=3.2.4,!=2.0.3"
 - change default `--notebook-exec-mode` from `async` to `auto` for intelligent execution mode detection
 - implement auto-detection of `await` statements to generate async wrappers only when needed, avoiding unnecessary asyncio overhead for synchronous notebooks
 - refactor execution path to use universal sync handler that intelligently executes both sync and async code
