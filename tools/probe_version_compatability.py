@@ -907,16 +907,22 @@ def _pipelined_parallel_probe(
 
     Uses two thread pools (setup and execution) coordinated via a queue. While workers
     in the execution pool run pytest tests, workers in the setup pool prepare the next
-    set of environments. This allows I/O-bound setup (pip install) to overlap with
-    CPU-light pytest execution.
+    set of environments. This allows I/O bound setup (pip install) to overlap with
+    CPU light pytest execution.
 
     Preserves "first failure in order" semantics.
+
+    Correctness notes:
+        - Prepared environments are tagged with their version index, so execution
+          results are stored in the correct slot even when setups complete out of order.
+        - The ordered collector index advances only when the corresponding future has
+          been collected, so the tail of the list cannot be skipped.
 
     Args:
         versions: Version strings to probe in order (assumed ordered, will process from start).
         project_root: Root directory of the project to test.
         dist_name: Distribution name to probe.
-        max_workers: Maximum concurrent execution workers (setup workers auto-scaled).
+        max_workers: Maximum concurrent execution workers (setup workers auto scaled).
         stop_on_first_fail: If True, stop probing on the first failure.
         keep_failed_venv: If True, keep venv directories for failed probes.
         extra_install: Additional packages to install.
@@ -942,73 +948,99 @@ def _pipelined_parallel_probe(
 
         )
     """
-    # Queue holds prepared environments ready for execution
-    prepared_queue: queue.Queue[Optional[PreparedEnvironment]] = queue.Queue(
-        maxsize=max_workers * 2
-    )
+    n_versions: int = len(versions)
+    if n_versions == 0:
+        return []
 
-    results: list[Optional[ProbeResult]] = [None] * len(versions)
+    # Queue holds prepared environments, tagged with their index in the versions list.
+    prepared_queue: queue.Queue[Optional[tuple[int, PreparedEnvironment]]] = (
+        queue.Queue()
+    )
+    prepared_by_index: dict[int, PreparedEnvironment] = {}
+
+    results: list[Optional[ProbeResult]] = [None] * n_versions
     stop_event: threading.Event = threading.Event()
+
+    num_setup_workers: int = max(1, max_workers // 2)
     next_setup_index: int = 0
-    next_exec_index: int = 0
-    worker_lock: threading.Lock = threading.Lock()
+    setup_lock: threading.Lock = threading.Lock()
 
     def setup_worker(worker_id: int) -> None:
         """Continuously prepare environments from the versions list."""
         nonlocal next_setup_index
-        while next_setup_index < len(versions) and not stop_event.is_set():
-            with worker_lock:
-                idx: int = next_setup_index
-                next_setup_index += 1
+        try:
+            while True:
+                if stop_event.is_set():
+                    return
 
-            version: str = versions[idx]
+                with setup_lock:
+                    if next_setup_index >= n_versions:
+                        return
+                    idx: int = next_setup_index
+                    next_setup_index += 1
 
-            if verbose >= 2:
-                print(
-                    f"[Setup Worker {worker_id}] Starting setup for version {version}"
+                version: str = versions[idx]
+
+                if verbose >= 2:
+                    print(
+                        f"[Setup Worker {worker_id}] Starting setup for version {version}"
+                    )
+
+                setup_start: float = time.time()
+                prepared: PreparedEnvironment = _setup_pytest_environment(
+                    project_root=project_root,
+                    version=version,
+                    dist_name=dist_name,
+                    extra_install=extra_install,
+                    python_cmd=python_cmd,
                 )
+                setup_duration: float = time.time() - setup_start
 
-            setup_start: float = time.time()
-            prepared: PreparedEnvironment = _setup_pytest_environment(
-                project_root=project_root,
-                version=version,
-                dist_name=dist_name,
-                extra_install=extra_install,
-                python_cmd=python_cmd,
-            )
-            setup_duration: float = time.time() - setup_start
+                if verbose >= 2:
+                    status: str = "SUCCESS" if prepared.setup_passed else "FAILED"
+                    print(
+                        f"[Setup Worker {worker_id}] Setup complete for {version} "
+                        f"({setup_duration:.1f}s) - {status}"
+                    )
 
-            if verbose >= 2:
-                status: str = "SUCCESS" if prepared.setup_passed else "FAILED"
-                print(
-                    f"[Setup Worker {worker_id}] Setup complete for {version} "
-                    f"({setup_duration:.1f}s) - {status}"
-                )
+                prepared_queue.put((idx, prepared))
+        finally:
+            # Signal completion. One sentinel per worker.
+            prepared_queue.put(None)
 
-            prepared_queue.put(prepared)
+    exec_futures: dict[int, cf.Future[ProbeResult]] = {}
+    next_submit_index: int = 0
+    next_collect_index: int = 0
+    exec_worker_counter: int = 0
+    setup_done_workers: int = 0
 
     with cf.ThreadPoolExecutor(max_workers=max_workers) as exec_pool:
-        with cf.ThreadPoolExecutor(max_workers=max(1, max_workers // 2)) as setup_pool:
-            # Start setup workers
-            # (pylint: disable=unused-variable)
-            # The futures list is not explicitly awaited, but setup workers run
-            # concurrently and coordinate with exec workers via the queue.
+        with cf.ThreadPoolExecutor(max_workers=num_setup_workers) as setup_pool:
             _ = [
-                setup_pool.submit(setup_worker, setup_worker_id)
-                for setup_worker_id in range(max(1, max_workers // 2))
+                setup_pool.submit(setup_worker, wid) for wid in range(num_setup_workers)
             ]
 
-            exec_futures: dict[int, cf.Future[ProbeResult]] = {}
+            while next_collect_index < n_versions:
+                # Submit executions in order, but only when the prepared env is available.
+                while (
+                    len(exec_futures) < max_workers and next_submit_index < n_versions
+                ):
+                    prepared: Optional[PreparedEnvironment] = prepared_by_index.get(
+                        next_submit_index
+                    )
+                    if prepared is None:
+                        break
 
-            def submit_execution(idx: int, exec_worker_id: int) -> None:
-                """Submit an execution task for a prepared environment."""
-                try:
-                    prepared: PreparedEnvironment = prepared_queue.get(timeout=30)
+                    prepared_by_index.pop(next_submit_index)
+                    exec_worker_id: int = exec_worker_counter % max_workers
+                    exec_worker_counter += 1
+
                     if verbose >= 2:
                         print(
                             f"[Exec Worker {exec_worker_id}] Starting execution for version {prepared.version}"
                         )
-                    exec_futures[idx] = exec_pool.submit(
+
+                    exec_futures[next_submit_index] = exec_pool.submit(
                         _run_pytest_in_environment,
                         prepared_env=prepared,
                         project_root=project_root,
@@ -1017,24 +1049,16 @@ def _pipelined_parallel_probe(
                         verbose=verbose,
                         worker_id=exec_worker_id,
                     )
-                except queue.Empty:
-                    pass
+                    next_submit_index += 1
 
-            # Fill initial execution queue
-            exec_worker_counter: int = 0
-            for idx in range(min(max_workers, len(versions))):
-                submit_execution(idx, exec_worker_counter % max_workers)
-                next_exec_index += 1
-                exec_worker_counter += 1
-
-            # Collect results in order
-            collected_count: int = 0
-            while collected_count < len(versions):
-                if collected_count in exec_futures:
-                    fut: cf.Future[ProbeResult] = exec_futures[collected_count]
+                # Collect results strictly in order.
+                fut: Optional[cf.Future[ProbeResult]] = exec_futures.get(
+                    next_collect_index
+                )
+                if fut is not None:
                     res: ProbeResult = fut.result()
-                    results[collected_count] = res
-                    del exec_futures[collected_count]
+                    results[next_collect_index] = res
+                    del exec_futures[next_collect_index]
 
                     if res.passed:
                         print(f"PASS: {res.version} ({res.duration_s:.1f} s)")
@@ -1053,21 +1077,33 @@ def _pipelined_parallel_probe(
 
                         if stop_on_first_fail:
                             stop_event.set()
-                            for f in exec_futures.values():
-                                f.cancel()
+                            for pending in exec_futures.values():
+                                pending.cancel()
                             break
 
-                    # Submit next execution task if available
-                    if next_exec_index < len(versions):
-                        submit_execution(next_exec_index)
-                        next_exec_index += 1
-                else:
-                    # Execution hasn't started yet, wait briefly
-                    time.sleep(0.1)
+                    next_collect_index += 1
+                    continue
 
-                collected_count += 1
+                # No future for the next collect index yet. Ingest prepared envs.
+                try:
+                    item: Optional[tuple[int, PreparedEnvironment]] = (
+                        prepared_queue.get(timeout=0.25)
+                    )
+                except queue.Empty:
+                    if setup_done_workers >= num_setup_workers and not exec_futures:
+                        break
+                    continue
 
-            # Signal setup workers to stop
+                if item is None:
+                    setup_done_workers += 1
+                    if setup_done_workers >= num_setup_workers:
+                        if next_submit_index >= n_versions and not exec_futures:
+                            break
+                    continue
+
+                idx, prepared = item
+                prepared_by_index[idx] = prepared
+
             stop_event.set()
 
     out: list[ProbeResult] = []
@@ -1257,6 +1293,16 @@ def main() -> int:
         help="Stop probing on the first failure.",
     )
     parser.add_argument(
+        "--verbose",
+        type=int,
+        default=0,
+        choices=[0, 1, 2, 3],
+        help=(
+            "Verbosity level: 0=quiet (default), 1=normal, 2+=worker details with timings. "
+            "Levels 2+ show setup timing and worker IDs."
+        ),
+    )
+    parser.add_argument(
         "--start-version",
         type=str,
         default=None,
@@ -1282,6 +1328,7 @@ def main() -> int:
     keep_failed_venv: bool = bool(args.keep_failed_venv)
     extra_install: list[str] = list(args.extra_install)
     pytest_cmd: list[str] = ["-m", "pytest", *list(args.pytest_args)]
+    verbose: int = int(args.verbose)
     stop_on_first_fail: bool = bool(args.stop_on_first_fail)
     walk_major_then_refine: bool = bool(args.walk_major_then_refine)
     python_cmd: list[str] = _resolve_python_cmd(args.python, args.python_version)
@@ -1340,6 +1387,7 @@ def main() -> int:
         extra_install=extra_install,
         pytest_cmd=pytest_cmd,
         python_cmd=python_cmd,
+        verbose=verbose,
     )
 
     last_ok: Optional[str] = None
@@ -1364,7 +1412,7 @@ def main() -> int:
                 f"\nMajor version {failed_major} failed at {failed_version}. "
                 "Refining patch boundary..."
             )
-            patch_versions: list[str] = _versions_for_major(versions, failed_major)
+            patch_versions: list[str] = _versions_for_major(all_versions, failed_major)
             if patch_versions:
                 patch_results: list[ProbeResult] = _pipelined_parallel_probe(
                     versions=patch_versions,
@@ -1376,6 +1424,7 @@ def main() -> int:
                     extra_install=extra_install,
                     pytest_cmd=pytest_cmd,
                     python_cmd=python_cmd,
+                    verbose=verbose,
                 )
                 for r in patch_results:
                     if r.passed:
@@ -1396,6 +1445,7 @@ def main() -> int:
             extra_install=extra_install,
             pytest_cmd=pytest_cmd,
             python_cmd=python_cmd,
+            verbose=verbose,
         )
 
     print(f"\nLast passing version on downward walk: {last_ok or 'none'}")
