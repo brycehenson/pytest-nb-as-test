@@ -906,6 +906,7 @@ def _pipelined_parallel_probe(
     max_workers: int,
     stop_on_first_fail: bool,
     keep_failed_venv: bool,
+    hide_failed_output: bool,
     extra_install: Sequence[str],
     pytest_cmd: Sequence[str],
     python_cmd: Sequence[str],
@@ -935,6 +936,7 @@ def _pipelined_parallel_probe(
         max_workers: Maximum concurrent execution workers (setup workers auto scaled).
         stop_on_first_fail: If True, stop probing on the first failure in version order.
         keep_failed_venv: If True, keep venv directories for failed probes.
+        hide_failed_output: If True, suppress printing stdout and stderr for failures.
         extra_install: Additional packages to install.
         pytest_cmd: Pytest command to run.
         python_cmd: Python command for venv creation.
@@ -951,6 +953,7 @@ def _pipelined_parallel_probe(
             max_workers=4,
             stop_on_first_fail=True,
             keep_failed_venv=False,
+            hide_failed_output=False,
             extra_install=[],
             pytest_cmd=["-m", "pytest"],
             python_cmd=["python3.10"],
@@ -1126,20 +1129,11 @@ def _pipelined_parallel_probe(
                     results[idx] = res
                     exec_futures.pop(idx, None)
 
-                    if res.passed:
-                        print(f"PASS: {res.version} ({res.duration_s:.1f} s)")
-                    else:
-                        print(
-                            f"FAIL: {res.version} ({res.duration_s:.1f} s), rc={res.returncode}"
-                        )
-                        if res.stdout.strip():
-                            print("  stdout:")
-                            print(res.stdout.rstrip())
-                        if res.stderr.strip():
-                            print("  stderr:")
-                            print(res.stderr.rstrip())
-                        if keep_failed_venv:
-                            print(f"  kept venv: {res.venv_dir}")
+                    _print_probe_outcome(
+                        res,
+                        keep_failed_venv=keep_failed_venv,
+                        hide_failed_output=hide_failed_output,
+                    )
 
                 if stop_on_first_fail:
                     # Advance the in-order pointer through any contiguous passes.
@@ -1204,6 +1198,7 @@ def _ordered_parallel_probe(
     max_workers: int,
     stop_on_first_fail: bool,
     keep_failed_venv: bool,
+    hide_failed_output: bool,
     extra_install: Sequence[str],
     pytest_cmd: Sequence[str],
     python_cmd: Sequence[str],
@@ -1222,6 +1217,7 @@ def _ordered_parallel_probe(
         max_workers: Maximum concurrent workers.
         stop_on_first_fail: If True, stop on the first failure in version order.
         keep_failed_venv: If True, keep failed venv directories.
+        hide_failed_output: If True, suppress printing stdout and stderr for failures.
         extra_install: Additional packages to install.
         pytest_cmd: Pytest command to run.
         python_cmd: Python command for venv creation.
@@ -1237,6 +1233,7 @@ def _ordered_parallel_probe(
             max_workers=4,
             stop_on_first_fail=True,
             keep_failed_venv=False,
+            hide_failed_output=False,
             extra_install=[],
             pytest_cmd=["-m", "pytest"],
             python_cmd=["python3.10"]
@@ -1289,20 +1286,11 @@ def _ordered_parallel_probe(
                 results[idx] = res
                 futures_by_index.pop(idx, None)
 
-                if res.passed:
-                    print(f"PASS: {res.version} ({res.duration_s:.1f} s)")
-                else:
-                    print(
-                        f"FAIL: {res.version} ({res.duration_s:.1f} s), rc={res.returncode}"
-                    )
-                    if res.stdout.strip():
-                        print("  stdout:")
-                        print(res.stdout.rstrip())
-                    if res.stderr.strip():
-                        print("  stderr:")
-                        print(res.stderr.rstrip())
-                    if keep_failed_venv:
-                        print(f"  kept venv: {res.venv_dir}")
+                _print_probe_outcome(
+                    res,
+                    keep_failed_venv=keep_failed_venv,
+                    hide_failed_output=hide_failed_output,
+                )
 
             # In-order stop decision.
             if stop_on_first_fail:
@@ -1334,6 +1322,44 @@ def _ordered_parallel_probe(
             break
         out.append(r)
     return out
+
+
+def _print_probe_outcome(
+    result: ProbeResult,
+    *,
+    keep_failed_venv: bool,
+    hide_failed_output: bool,
+) -> None:
+    """Print a single probe outcome.
+
+    This is the per version reporting hook used by both the pipelined and legacy
+    parallel probes.
+
+    Args:
+        result: The ProbeResult to report.
+        keep_failed_venv: If True and the probe failed, the venv directory is kept.
+        hide_failed_output: If True, suppress printing stdout and stderr for failures.
+    """
+    if result.passed:
+        print(f"PASS: {result.version} ({result.duration_s:.1f} s)")
+        return
+
+    rc: int = result.returncode
+    print(f"FAIL: {result.version} ({result.duration_s:.1f} s) [rc={rc}]")
+
+    if keep_failed_venv:
+        print(f"kept venv: {result.venv_dir}")
+
+    if hide_failed_output:
+        return
+
+    if result.stdout.strip():
+        print("\n[stdout]")
+        print(result.stdout.rstrip())
+
+    if result.stderr.strip():
+        print("\n[stderr]")
+        print(result.stderr.rstrip())
 
 
 def _print_final_report(
@@ -1450,6 +1476,11 @@ def main() -> int:
         help="Keep venv directories for failing probes to allow debugging.",
     )
     parser.add_argument(
+        "--hide-failed-output",
+        action="store_true",
+        help="Do not print stdout and stderr for failing probes.",
+    )
+    parser.add_argument(
         "--extra-install",
         nargs="*",
         default=[],
@@ -1509,6 +1540,7 @@ def main() -> int:
     dist_name: str = args.dist
     max_workers: int = int(args.max_workers)
     keep_failed_venv: bool = bool(args.keep_failed_venv)
+    hide_failed_output: bool = bool(args.hide_failed_output)
     extra_install: list[str] = list(args.extra_install)
     pytest_cmd: list[str] = ["-m", "pytest", *list(args.pytest_args)]
     verbose: int = int(args.verbose)
@@ -1569,6 +1601,7 @@ def main() -> int:
         max_workers=max_workers,
         stop_on_first_fail=stop_on_first_fail,
         keep_failed_venv=keep_failed_venv,
+        hide_failed_output=hide_failed_output,
         extra_install=extra_install,
         pytest_cmd=pytest_cmd,
         python_cmd=python_cmd,
@@ -1607,6 +1640,7 @@ def main() -> int:
                     max_workers=max_workers,
                     stop_on_first_fail=stop_on_first_fail,
                     keep_failed_venv=keep_failed_venv,
+                    hide_failed_output=hide_failed_output,
                     extra_install=extra_install,
                     pytest_cmd=pytest_cmd,
                     python_cmd=python_cmd,
@@ -1629,6 +1663,7 @@ def main() -> int:
             max_workers=max_workers,
             stop_on_first_fail=stop_on_first_fail,
             keep_failed_venv=keep_failed_venv,
+            hide_failed_output=hide_failed_output,
             extra_install=extra_install,
             pytest_cmd=pytest_cmd,
             python_cmd=python_cmd,
