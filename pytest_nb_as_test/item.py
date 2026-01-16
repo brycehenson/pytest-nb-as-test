@@ -33,8 +33,10 @@ from .timeout import (
 )
 
 
-def pytest_collect_file(
-    parent: pytest.Collector, file_path: Path
+def pytest_collect_file(  # type: ignore[override]
+    parent: pytest.Collector,
+    path: Any,
+    **kwargs: Any,
 ) -> pytest.File | None:
     """Collect Jupyter notebook files as pytest items.
 
@@ -45,26 +47,33 @@ def pytest_collect_file(
 
     Args:
         parent: Parent pytest collector.
-        file_path: Path to the candidate file.
+        path: Candidate path from pytest (type varies across pytest versions).
+        **kwargs: Additional hook arguments from pytest (varies across versions).
 
     Returns:
         A NotebookFile when the notebook should be collected, otherwise None.
-
-    Example:
-        collected = pytest_collect_file(parent, Path("example.ipynb"))
     """
+    raw_path: Any = kwargs.get("file_path", path)
+
+    try:
+        file_path: Path = Path(str(raw_path))
+    except Exception:
+        return None
+
     if file_path.suffix != ".ipynb":
         return None
+
     config = parent.config
     notebook_glob = _resolve_option(config, "notebook_glob", default=None)
     if notebook_glob:
-        # Apply name-only globs to basenames for simple filters like "test_*.ipynb".
+        # Apply path-containing globs to the relative path, otherwise match basename.
         if "/" in notebook_glob or os.sep in notebook_glob:
             if not file_path.match(str(notebook_glob)):
                 return None
-        elif not fnmatch.fnmatch(file_path.name, notebook_glob):
-            return None
-    # create custom file collector
+        else:
+            if not fnmatch.fnmatch(file_path.name, notebook_glob):
+                return None
+
     return NotebookFile.from_parent(parent=parent, path=file_path)
 
 
