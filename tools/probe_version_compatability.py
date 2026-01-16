@@ -819,7 +819,12 @@ def _run_pytest_in_environment(
 
         dist_name = prepared_env.dist_name
         ver_proc = _run(
-            [str(vpy), "-c", f"import {dist_name}; print({dist_name}.__version__)"],
+            [
+                str(vpy),
+                "-c",
+                # Use importlib.metadata to check the distribution version directly
+                f"import importlib.metadata; print(importlib.metadata.version('{dist_name}'))",
+            ],
             cwd=project_root,
             env=env,
             check=False,
@@ -827,14 +832,8 @@ def _run_pytest_in_environment(
         ver_str = ver_proc.stdout.strip()
         print(f"{dist_name} {ver_str}")
         if ver_proc.returncode != 0 or ver_str != prepared_env.version:
-            return ProbeResult(
-                version=prepared_env.version,
-                passed=False,
-                returncode=1,
-                duration_s=time.time() - t0,
-                venv_dir=venv_dir,
-                stdout=ver_proc.stdout,
-                stderr=f"Version drift: expected {dist_name} {prepared_env.version}, got {ver_proc.stdout.strip()!r}\n{ver_proc.stderr}",
+            raise RuntimeError(
+                f"Version drift: expected {dist_name} {prepared_env.version}, got {ver_proc.stdout.strip()!r}\n{ver_proc.stderr}"
             )
 
         cache_dir: str = f"/tmp/pytest_cache/{prepared_env.version}"
