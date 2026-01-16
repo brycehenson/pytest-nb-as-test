@@ -31,6 +31,6 @@ for pyver in "${python_versions[@]}"; do
       --max-workers 1 \
       --exclude-versions "${excluded_versions}" \
       --no-stop-on-first-fail \
-      --pytest-args -c /dev/null -n 15
+      --pytest-args -c /dev/null -n 5
   ) 2>&1 | tee "logs/nbformat_exhaustive_py_${py_tag}.log"
 done

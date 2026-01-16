@@ -28,7 +28,7 @@ for pyver in "${python_versions[@]}"; do
       --dist "${dist}" \
       --extra-install "${extra_install[@]}" \
       --python-version "${pyver}" \
-      --max-workers 10 \
+      --max-workers 1 \
       --exclude-versions "${excluded_versions}" \
       --no-stop-on-first-fail \
       --hide-failed-output \

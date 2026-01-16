@@ -997,7 +997,7 @@ def _pipelined_parallel_probe(
     results: list[Optional[ProbeResult]] = [None] * n_versions
     stop_event: threading.Event = threading.Event()
 
-    num_setup_workers: int = 15  # max(1, max_workers * 2)
+    num_setup_workers: int = 14  # max(1, max_workers * 2) fix this with a option
     next_setup_index: int = 0
     setup_lock: threading.Lock = threading.Lock()
 
