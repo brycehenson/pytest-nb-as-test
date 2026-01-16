@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import inspect
 import os
 import re
 import traceback
 from pathlib import Path
-from typing import Any, Callable, Coroutine, Dict, Iterable, cast
+from typing import Any, Callable, ClassVar, Coroutine, Dict, Iterable, cast
 
 import nbformat  # type: ignore
 import pytest  # type: ignore
@@ -64,7 +65,7 @@ def pytest_collect_file(
         elif not fnmatch.fnmatch(file_path.name, notebook_glob):
             return None
     # create custom file collector
-    return NotebookFile.from_parent(parent, path=file_path)
+    return NotebookFile.from_parent(parent=parent, path=file_path)
 
 
 class NotebookFile(pytest.File):
@@ -107,9 +108,6 @@ class NotebookFile(pytest.File):
             raise pytest.UsageError(
                 f"--notebook-exec-mode must be 'auto', 'async' or 'sync', got {exec_mode!r}"
             )
-        uses_pytest_asyncio = config.pluginmanager.hasplugin(
-            "asyncio"
-        ) or config.pluginmanager.hasplugin("pytest_asyncio")
 
         notebook_timeout_seconds = _parse_optional_timeout(
             _resolve_option(config, "notebook_timeout_seconds", default=""),
@@ -214,12 +212,11 @@ class NotebookFile(pytest.File):
         if not selected:
             # no cells selected – yield a dummy skip item
             item = NotebookItem.from_parent(
-                self,
+                parent=self,
                 name=f"{self.path.name}::no_selected_cells",
                 path=self.path,
                 code="",
                 is_async=(str(exec_mode).lower() == "async"),
-                uses_pytest_asyncio=uses_pytest_asyncio,
                 keep_generated=keep_generated,
                 cell_spans=[],
                 timeout_config=timeout_config,
@@ -324,12 +321,11 @@ class NotebookFile(pytest.File):
         # name for the test item
         item_name = f"{self.path.name}::notebook"  # used in test id
         item = NotebookItem.from_parent(
-            self,
+            parent=self,
             name=item_name,
             path=self.path,
             code=generated_code,
             is_async=is_async,
-            uses_pytest_asyncio=uses_pytest_asyncio,
             keep_generated=keep_generated,
             cell_spans=cell_spans,
             timeout_config=timeout_config,
@@ -339,15 +335,6 @@ class NotebookFile(pytest.File):
         # 1. Code is async, AND
         # 2. pytest-asyncio is installed, AND
         # 3. pytest-asyncio is NOT in auto mode (auto mode doesn't work well with bound methods)
-        if is_async and uses_pytest_asyncio:
-            asyncio_mode = None
-            try:
-                asyncio_mode = self.config.getini("asyncio_mode")
-            except (AttributeError, ValueError):
-                pass
-            # Only mark if not in auto mode, or if we can't determine the mode
-            if asyncio_mode != "auto":
-                item.add_marker(pytest.mark.asyncio)
         item.add_marker("notebook")
         return [item]
 
@@ -363,8 +350,13 @@ class NotebookItem(pytest.Function):
         item = NotebookItem.from_parent(parent, name="example.ipynb::notebook")
     """
 
+    _BASE_INIT_KW: ClassVar[frozenset[str]] = frozenset(
+        inspect.signature(pytest.Function.__init__).parameters.keys()
+    )
+
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
+        *,
         name: str,
         parent: pytest.File,
         path: Path,
@@ -374,13 +366,27 @@ class NotebookItem(pytest.Function):
         cell_spans: list[CellCodeSpan],
         timeout_config: NotebookTimeoutConfig,
         has_timeouts: bool,
+        **kwargs: Any,
     ) -> None:
         # Always use sync execution path. This works for both sync and async code:
         # - Sync code runs directly via self._run_notebook_sync
         # - Async code is executed via asyncio.run() inside self._run_notebook_sync
         # This approach sidesteps pytest-asyncio integration issues while remaining
         # compliant with the documented behavior.
-        super().__init__(name, parent, callobj=cast(Any, self._run_notebook_sync))
+
+        # pytest may inject kwargs intended for *your* node (or for other plugins),
+        # but pytest.Function.__init__ will reject unknown ones.
+        # TODO: this is messy and i would rather not do it this way
+        base_kwargs: dict[str, Any] = {
+            k: v for k, v in kwargs.items() if k in self._BASE_INIT_KW
+        }
+
+        super().__init__(
+            name=name,
+            parent=parent,
+            callobj=cast(Any, self._run_notebook_sync),
+            **base_kwargs,
+        )
         # TODO: this cast is a mypy workaround; consider refactoring callobj typing
         self.path = path
         self._generated_code = code
