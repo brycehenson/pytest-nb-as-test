@@ -5,6 +5,14 @@ Features:
 - Walk down from current version to older versions, then up if needed.
 - With --walk-major-then-refine: probe major versions first, then refine patch boundary
   when a failure is found.
+
+TODO:
+- I want to split this into
+  - runner
+    - env setup
+    - multi process/thread orchestration
+  - search/scheduling logic
+This way the planner just passes a list of versions ect to test
 """
 from __future__ import annotations
 
@@ -910,20 +918,22 @@ def _pipelined_parallel_probe(
     set of environments. This allows I/O bound setup (pip install) to overlap with
     CPU light pytest execution.
 
-    Preserves "first failure in order" semantics.
+    Reporting is done as soon as each probe completes (not necessarily in version order).
+    If stop_on_first_fail is enabled, stopping still uses "first failure in order" semantics,
+    meaning probing stops once the earliest (in-order) failing version is determined.
 
     Correctness notes:
         - Prepared environments are tagged with their version index, so execution
           results are stored in the correct slot even when setups complete out of order.
-        - The ordered collector index advances only when the corresponding future has
-          been collected, so the tail of the list cannot be skipped.
+        - For stop_on_first_fail, the stop decision is based on the earliest index that
+          is known to fail after all earlier indices have been observed to pass.
 
     Args:
         versions: Version strings to probe in order (assumed ordered, will process from start).
         project_root: Root directory of the project to test.
         dist_name: Distribution name to probe.
         max_workers: Maximum concurrent execution workers (setup workers auto scaled).
-        stop_on_first_fail: If True, stop probing on the first failure.
+        stop_on_first_fail: If True, stop probing on the first failure in version order.
         keep_failed_venv: If True, keep venv directories for failed probes.
         extra_install: Additional packages to install.
         pytest_cmd: Pytest command to run.
@@ -931,7 +941,7 @@ def _pipelined_parallel_probe(
         verbose: Verbosity level 0-3. 0=quiet, 1=normal, 2+=worker details with timings.
 
     Returns:
-        List of ProbeResult objects in order.
+        List of ProbeResult objects in order (prefix up to the first untested version).
 
     Example:
         results = _pipelined_parallel_probe(
@@ -951,6 +961,12 @@ def _pipelined_parallel_probe(
     n_versions: int = len(versions)
     if n_versions == 0:
         return []
+
+    def _cleanup_unexecuted(prepared_env: PreparedEnvironment) -> None:
+        """Best-effort cleanup for a prepared environment that will not be executed."""
+        if keep_failed_venv and (not prepared_env.setup_passed):
+            return
+        shutil.rmtree(prepared_env.venv_dir, ignore_errors=True)
 
     # Queue holds prepared environments, tagged with their index in the versions list.
     prepared_queue: queue.Queue[Optional[tuple[int, PreparedEnvironment]]] = (
@@ -1009,10 +1025,14 @@ def _pipelined_parallel_probe(
             prepared_queue.put(None)
 
     exec_futures: dict[int, cf.Future[ProbeResult]] = {}
+    future_to_index: dict[cf.Future[ProbeResult], int] = {}
+
     next_submit_index: int = 0
-    next_collect_index: int = 0
     exec_worker_counter: int = 0
     setup_done_workers: int = 0
+
+    # For stop_on_first_fail, track the earliest index whose outcome matters next.
+    next_in_order: int = 0
 
     with cf.ThreadPoolExecutor(max_workers=max_workers) as exec_pool:
         with cf.ThreadPoolExecutor(max_workers=num_setup_workers) as setup_pool:
@@ -1020,8 +1040,24 @@ def _pipelined_parallel_probe(
                 setup_pool.submit(setup_worker, wid) for wid in range(num_setup_workers)
             ]
 
-            while next_collect_index < n_versions:
-                # Submit executions in order, but only when the prepared env is available.
+            while True:
+                # Drain any prepared environments that are ready.
+                while True:
+                    try:
+                        item: Optional[tuple[int, PreparedEnvironment]] = (
+                            prepared_queue.get_nowait()
+                        )
+                    except queue.Empty:
+                        break
+
+                    if item is None:
+                        setup_done_workers += 1
+                        continue
+
+                    idx, prepared = item
+                    prepared_by_index[idx] = prepared
+
+                # Submit executions in-order, but print as tasks finish.
                 while (
                     len(exec_futures) < max_workers and next_submit_index < n_versions
                 ):
@@ -1040,7 +1076,7 @@ def _pipelined_parallel_probe(
                             f"[Exec Worker {exec_worker_id}] Starting execution for version {prepared.version}"
                         )
 
-                    exec_futures[next_submit_index] = exec_pool.submit(
+                    fut: cf.Future[ProbeResult] = exec_pool.submit(
                         _run_pytest_in_environment,
                         prepared_env=prepared,
                         project_root=project_root,
@@ -1049,16 +1085,46 @@ def _pipelined_parallel_probe(
                         verbose=verbose,
                         worker_id=exec_worker_id,
                     )
+                    exec_futures[next_submit_index] = fut
+                    future_to_index[fut] = next_submit_index
                     next_submit_index += 1
 
-                # Collect results strictly in order.
-                fut: Optional[cf.Future[ProbeResult]] = exec_futures.get(
-                    next_collect_index
+                if stop_event.is_set():
+                    break
+
+                # If nothing is running, block briefly waiting for new setup output.
+                if not exec_futures:
+                    if (
+                        setup_done_workers >= num_setup_workers
+                        and next_submit_index >= n_versions
+                    ):
+                        break
+
+                    try:
+                        item = prepared_queue.get(timeout=0.25)
+                    except queue.Empty:
+                        continue
+
+                    if item is None:
+                        setup_done_workers += 1
+                    else:
+                        idx, prepared = item
+                        prepared_by_index[idx] = prepared
+                    continue
+
+                done, _ = cf.wait(
+                    set(exec_futures.values()),
+                    timeout=0.25,
+                    return_when=cf.FIRST_COMPLETED,
                 )
-                if fut is not None:
+                if not done:
+                    continue
+
+                for fut in done:
+                    idx: int = future_to_index.pop(fut)
                     res: ProbeResult = fut.result()
-                    results[next_collect_index] = res
-                    del exec_futures[next_collect_index]
+                    results[idx] = res
+                    exec_futures.pop(idx, None)
 
                     if res.passed:
                         print(f"PASS: {res.version} ({res.duration_s:.1f} s)")
@@ -1075,36 +1141,52 @@ def _pipelined_parallel_probe(
                         if keep_failed_venv:
                             print(f"  kept venv: {res.venv_dir}")
 
-                        if stop_on_first_fail:
-                            stop_event.set()
-                            for pending in exec_futures.values():
+                if stop_on_first_fail:
+                    # Advance the in-order pointer through any contiguous passes.
+                    while (
+                        next_in_order < n_versions
+                        and results[next_in_order] is not None
+                    ):
+                        r0: ProbeResult = results[next_in_order]  # type: ignore[assignment]
+                        if r0.passed:
+                            next_in_order += 1
+                            continue
+
+                        # The earliest unresolved version has failed.
+                        stop_event.set()
+                        for j, pending in list(exec_futures.items()):
+                            if j > next_in_order:
                                 pending.cancel()
-                            break
-
-                    next_collect_index += 1
-                    continue
-
-                # No future for the next collect index yet. Ingest prepared envs.
-                try:
-                    item: Optional[tuple[int, PreparedEnvironment]] = (
-                        prepared_queue.get(timeout=0.25)
-                    )
-                except queue.Empty:
-                    if setup_done_workers >= num_setup_workers and not exec_futures:
+                                future_to_index.pop(pending, None)
+                                exec_futures.pop(j, None)
                         break
-                    continue
 
-                if item is None:
-                    setup_done_workers += 1
-                    if setup_done_workers >= num_setup_workers:
-                        if next_submit_index >= n_versions and not exec_futures:
-                            break
-                    continue
+                if stop_event.is_set():
+                    break
 
-                idx, prepared = item
-                prepared_by_index[idx] = prepared
+                if (
+                    setup_done_workers >= num_setup_workers
+                    and next_submit_index >= n_versions
+                    and not exec_futures
+                ):
+                    break
 
             stop_event.set()
+
+    # Clean up any prepared but unexecuted environments.
+    for prepared in prepared_by_index.values():
+        _cleanup_unexecuted(prepared)
+
+    while True:
+        try:
+            item = prepared_queue.get_nowait()
+        except queue.Empty:
+            break
+        if item is None:
+            continue
+        idx, prepared = item
+        if results[idx] is None and idx not in exec_futures:
+            _cleanup_unexecuted(prepared)
 
     out: list[ProbeResult] = []
     for r in results:
@@ -1131,14 +1213,14 @@ def _ordered_parallel_probe(
     This is the legacy implementation that runs setup and execution sequentially per worker.
     For new code, use _pipelined_parallel_probe to enable overlapping setup and execution.
 
-    This preserves "first failure in order" semantics, while still overlapping work.
+    Reporting is done as soon as each probe completes (not necessarily in version order).
 
     Args:
         versions: Version strings to probe in order.
         project_root: Root directory of the project to test.
         dist_name: Distribution name to probe.
         max_workers: Maximum concurrent workers.
-        stop_on_first_fail: If True, stop on first failure.
+        stop_on_first_fail: If True, stop on the first failure in version order.
         keep_failed_venv: If True, keep failed venv directories.
         extra_install: Additional packages to install.
         pytest_cmd: Pytest command to run.
@@ -1160,15 +1242,22 @@ def _ordered_parallel_probe(
             python_cmd=["python3.10"]
         )
     """
-    results: list[Optional[ProbeResult]] = [None] * len(versions)
+    n_versions: int = len(versions)
+    if n_versions == 0:
+        return []
+
+    results: list[Optional[ProbeResult]] = [None] * n_versions
     next_submit: int = 0
-    next_collect: int = 0
+
+    futures_by_index: dict[int, cf.Future[ProbeResult]] = {}
+    future_to_index: dict[cf.Future[ProbeResult], int] = {}
+
+    next_in_order: int = 0
 
     with cf.ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futures: dict[int, cf.Future[ProbeResult]] = {}
 
         def submit(i: int) -> None:
-            futures[i] = ex.submit(
+            fut: cf.Future[ProbeResult] = ex.submit(
                 probe_pytest_version,
                 project_root=project_root,
                 pytest_version=versions[i],
@@ -1178,42 +1267,66 @@ def _ordered_parallel_probe(
                 pytest_cmd=pytest_cmd,
                 python_cmd=python_cmd,
             )
+            futures_by_index[i] = fut
+            future_to_index[fut] = i
 
-        while next_submit < len(versions) and len(futures) < max_workers:
+        while next_submit < n_versions and len(futures_by_index) < max_workers:
             submit(next_submit)
             next_submit += 1
 
-        while next_collect < len(versions):
-            fut: cf.Future[ProbeResult] = futures[next_collect]
-            res: ProbeResult = fut.result()
-            results[next_collect] = res
-            del futures[next_collect]
+        while futures_by_index:
+            done, _ = cf.wait(
+                set(futures_by_index.values()),
+                timeout=0.25,
+                return_when=cf.FIRST_COMPLETED,
+            )
+            if not done:
+                continue
 
-            if res.passed:
-                print(f"PASS: {res.version} ({res.duration_s:.1f} s)")
-            else:
-                print(
-                    f"FAIL: {res.version} ({res.duration_s:.1f} s), rc={res.returncode}"
-                )
-                if res.stdout.strip():
-                    print("  stdout:")
-                    print(res.stdout.rstrip())
-                if res.stderr.strip():
-                    print("  stderr:")
-                    print(res.stderr.rstrip())
-                if keep_failed_venv:
-                    print(f"  kept venv: {res.venv_dir}")
+            for fut in done:
+                idx: int = future_to_index.pop(fut)
+                res: ProbeResult = fut.result()
+                results[idx] = res
+                futures_by_index.pop(idx, None)
 
-            if stop_on_first_fail and (not res.passed):
-                for f in futures.values():
-                    f.cancel()
-                break
+                if res.passed:
+                    print(f"PASS: {res.version} ({res.duration_s:.1f} s)")
+                else:
+                    print(
+                        f"FAIL: {res.version} ({res.duration_s:.1f} s), rc={res.returncode}"
+                    )
+                    if res.stdout.strip():
+                        print("  stdout:")
+                        print(res.stdout.rstrip())
+                    if res.stderr.strip():
+                        print("  stderr:")
+                        print(res.stderr.rstrip())
+                    if keep_failed_venv:
+                        print(f"  kept venv: {res.venv_dir}")
 
-            while next_submit < len(versions) and len(futures) < max_workers:
+            # In-order stop decision.
+            if stop_on_first_fail:
+                while next_in_order < n_versions and results[next_in_order] is not None:
+                    r0: ProbeResult = results[next_in_order]  # type: ignore[assignment]
+                    if r0.passed:
+                        next_in_order += 1
+                        continue
+
+                    for j, pending in list(futures_by_index.items()):
+                        if j > next_in_order:
+                            pending.cancel()
+                            future_to_index.pop(pending, None)
+                            futures_by_index.pop(j, None)
+                    break
+
+            while next_submit < n_versions and len(futures_by_index) < max_workers:
                 submit(next_submit)
                 next_submit += 1
 
-            next_collect += 1
+            if stop_on_first_fail and next_in_order < n_versions:
+                r_next: Optional[ProbeResult] = results[next_in_order]
+                if r_next is not None and (not r_next.passed):
+                    break
 
     out: list[ProbeResult] = []
     for r in results:
@@ -1221,6 +1334,76 @@ def _ordered_parallel_probe(
             break
         out.append(r)
     return out
+
+
+def _print_final_report(
+    *,
+    planned_versions: Sequence[str],
+    all_versions: Sequence[str],
+    results: Sequence[ProbeResult],
+    excluded_versions: Sequence[str],
+) -> None:
+    """Print a final summary of probe outcomes.
+
+    Args:
+        planned_versions: The versions the run intended to cover (as printed in the header).
+        all_versions: The full available version list (newest-first), after exclusions.
+        results: All ProbeResult entries gathered across all probe phases.
+        excluded_versions: Versions explicitly excluded by the user.
+    """
+    order: dict[str, int] = {v: i for i, v in enumerate(all_versions)}
+
+    outcomes: dict[str, set[bool]] = {}
+    for r in results:
+        outcomes.setdefault(r.version, set()).add(r.passed)
+
+    tested: set[str] = set(outcomes.keys())
+
+    passed: list[str] = [v for v, s in outcomes.items() if s == {True}]
+    failed: list[str] = [v for v, s in outcomes.items() if s == {False}]
+    inconsistent: list[str] = [v for v, s in outcomes.items() if s == {True, False}]
+
+    def sk(v: str) -> tuple[int, str]:
+        return (order.get(v, 10**9), v)
+
+    passed = sorted(passed, key=sk)
+    failed = sorted(failed, key=sk)
+    inconsistent = sorted(inconsistent, key=sk)
+
+    not_tested_planned: list[str] = [v for v in planned_versions if v not in tested]
+
+    # User asked that excluded versions be included under "not tested".
+    not_tested_total: list[str] = list(not_tested_planned)
+    for v in excluded_versions:
+        if v not in not_tested_total and v not in tested:
+            not_tested_total.append(v)
+
+    additional_tested: list[str] = [v for v in tested if v not in set(planned_versions)]
+    additional_tested = sorted(additional_tested, key=sk)
+
+    print("\n=== Probe report ===")
+    print(f"Planned versions: {len(planned_versions)}")
+    print(f"Tested versions: {len(tested)}")
+
+    if passed:
+        print(f"\nPASSED ({len(passed)}):")
+        print("  " + ", ".join(passed))
+
+    if failed:
+        print(f"\nFAILED ({len(failed)}):")
+        print("  " + ", ".join(failed))
+
+    if inconsistent:
+        print(f"\nINCONSISTENT ({len(inconsistent)}):")
+        print("  " + ", ".join(inconsistent))
+
+    if not_tested_total:
+        print(f"\nNOT TESTED ({len(not_tested_total)}):")
+        print("  " + ", ".join(not_tested_total))
+
+    if additional_tested:
+        print(f"\nADDITIONAL TESTED ({len(additional_tested)}):")
+        print("  " + ", ".join(additional_tested))
 
 
 def main() -> int:
@@ -1376,6 +1559,8 @@ def main() -> int:
     print(f"Versions to test: {versions}")
 
     print(f"\nWalking down from {current_version} to older versions.")
+    all_probe_results: list[ProbeResult] = []
+
     down_versions: list[str] = versions[current_index:]
     down_results: list[ProbeResult] = _pipelined_parallel_probe(
         versions=down_versions,
@@ -1389,6 +1574,7 @@ def main() -> int:
         python_cmd=python_cmd,
         verbose=verbose,
     )
+    all_probe_results.extend(down_results)
 
     last_ok: Optional[str] = None
     down_failed: bool = False
@@ -1426,6 +1612,7 @@ def main() -> int:
                     python_cmd=python_cmd,
                     verbose=verbose,
                 )
+                all_probe_results.extend(patch_results)
                 for r in patch_results:
                     if r.passed:
                         last_ok = r.version
@@ -1435,7 +1622,7 @@ def main() -> int:
     if down_failed and current_index > 0:
         print(f"\nWalking up from {current_version} to newer versions.")
         up_versions: list[str] = list(reversed(versions[:current_index]))
-        _ = _pipelined_parallel_probe(
+        up_results: list[ProbeResult] = _pipelined_parallel_probe(
             versions=up_versions,
             project_root=project_root,
             dist_name=dist_name,
@@ -1447,6 +1634,14 @@ def main() -> int:
             python_cmd=python_cmd,
             verbose=verbose,
         )
+        all_probe_results.extend(up_results)
+
+    _print_final_report(
+        planned_versions=versions,
+        all_versions=all_versions,
+        results=all_probe_results,
+        excluded_versions=exclude_versions,
+    )
 
     print(f"\nLast passing version on downward walk: {last_ok or 'none'}")
     return 0

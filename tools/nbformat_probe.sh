@@ -1,11 +1,36 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-excluded_versions=4.4.0,4.1.0
+mkdir -p logs
 
+excluded_versions="4.4.0,4.1.0"
+python_versions=("3.10" "3.12" "3.14")
+extra_install=(pytest matplotlib pytest-xdist)
 
-(python -u tools/probe_version_compatability.py --dist nbformat  --extra-install "pytest" "matplotlib" "pytest-xdist" --python-version 3.12 --max-workers 10 --exclude-versions 4.4.0 --walk-major-then-refine --pytest-args -c /dev/null -n 10 ) 2>&1 | tee logs/nbformat_walk_major_py_314.log
+for pyver in "${python_versions[@]}"; do
+  py_tag="${pyver//./}"  # "3.10" -> "310", "3.12" -> "312", "3.14" -> "314"
 
-echo "exhaustive search"
+  echo "walk-major-then-refine for Python ${pyver}"
+  (
+    python -u tools/probe_version_compatability.py \
+      --dist nbformat \
+      --extra-install "${extra_install[@]}" \
+      --python-version "${pyver}" \
+      --max-workers 10 \
+      --exclude-versions "${excluded_versions}" \
+      --walk-major-then-refine \
+      --pytest-args -c /dev/null -n 10
+  ) 2>&1 | tee "logs/nbformat_walk_major_py_${py_tag}.log"
 
-(python -u tools/probe_version_compatability.py --dist nbformat  --extra-install "pytest" "matplotlib" "pytest-xdist" --python-version 3.12 --max-workers 10 --exclude-versions 4.4.0 --start-version 5.0.2 --no-stop-on-first-fail --pytest-args -c /dev/null -n 10 ) 2>&1 | tee logs/nbformat_exhaustive_py_314.log
+  echo "exhaustive search for Python ${pyver}"
+  (
+    python -u tools/probe_version_compatability.py \
+      --dist nbformat \
+      --extra-install "${extra_install[@]}" \
+      --python-version "${pyver}" \
+      --max-workers 10 \
+      --exclude-versions "${excluded_versions}" \
+      --no-stop-on-first-fail \
+      --pytest-args -c /dev/null -n 10
+  ) 2>&1 | tee "logs/nbformat_exhaustive_py_${py_tag}.log"
+done
