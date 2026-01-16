@@ -38,6 +38,21 @@ def pytest_collect_file(  # type: ignore[override]
     path: Any,
     **kwargs: Any,
 ) -> pytest.File | None:
+    """Collect Jupyter notebook files as pytest items.
+
+    This hook is called by pytest for each file discovered during test
+    collection. If the file has a `.ipynb` suffix and passes the configured
+    directory and glob filters, it is wrapped in a ``NotebookFile``. Otherwise
+    collection proceeds normally.
+
+    Args:
+        parent: Parent pytest collector.
+        path: Candidate path from pytest (type varies across pytest versions).
+        **kwargs: Additional hook arguments from pytest (varies across versions).
+
+    Returns:
+        A NotebookFile when the notebook should be collected, otherwise None.
+    """
     raw_path: Any = kwargs.get("file_path", path)
 
     try:
@@ -51,6 +66,7 @@ def pytest_collect_file(  # type: ignore[override]
     config = parent.config
     notebook_glob = _resolve_option(config, "notebook_glob", default=None)
     if notebook_glob:
+        # Apply path-containing globs to the relative path, otherwise match basename.
         if "/" in notebook_glob or os.sep in notebook_glob:
             if not file_path.match(str(notebook_glob)):
                 return None
@@ -58,23 +74,7 @@ def pytest_collect_file(  # type: ignore[override]
             if not fnmatch.fnmatch(file_path.name, notebook_glob):
                 return None
 
-    from_parent_params: set[str] = set(
-        inspect.signature(NotebookFile.from_parent).parameters.keys()
-    )
-
-    if "path" in from_parent_params:
-        return NotebookFile.from_parent(parent=parent, path=file_path)
-
-    # pytest<=6 expects fspath=py.path.local(...)
-    if "fspath" in from_parent_params:
-        import py  # type: ignore
-
-        return NotebookFile.from_parent(
-            parent=parent, fspath=py.path.local(str(file_path))
-        )
-
-    # Should not happen, but fail closed
-    return None
+    return NotebookFile.from_parent(parent=parent, path=file_path)
 
 
 class NotebookFile(pytest.File):
