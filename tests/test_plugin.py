@@ -15,7 +15,6 @@ import shutil
 import textwrap
 from pathlib import Path
 
-import nbformat
 import pytest
 
 

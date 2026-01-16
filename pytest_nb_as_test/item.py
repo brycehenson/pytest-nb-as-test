@@ -370,7 +370,6 @@ class NotebookItem(pytest.Function):
         path: Path,
         code: str,
         is_async: bool,
-        uses_pytest_asyncio: bool,
         keep_generated: str | None,
         cell_spans: list[CellCodeSpan],
         timeout_config: NotebookTimeoutConfig,
