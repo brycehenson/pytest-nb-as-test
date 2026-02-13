@@ -28,11 +28,14 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
       - name: Install dependencies
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+        run: uv sync --locked --extra dev
 
       - name: Run pytest
-        run: pytest
+        run: uv run pytest
 
   pytest-old-versions:
     name: pytest-old-versions
@@ -46,15 +49,16 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install
-        run: |
-          python -m pip install -e . --no-deps
-          python -m pip install "pytest==7.0.0" pytest-timeout pytest-xdist nbformat numpy matplotlib
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
 
       - name: Run pytest
         run: |
-          python -m pytest --version
-          python -m pytest
+          uv run pytest --version
+          uv run pytest
 
 
   pylint:
@@ -69,11 +73,14 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
       - name: Install dependencies
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+        run: uv sync --locked --extra dev
 
       - name: Run pylint
-        run: pylint pytest_nb_as_test tests
+        run: uv run pylint pytest_nb_as_test tests
 
   pyright:
     name: pyright
@@ -87,11 +94,14 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
       - name: Install dependencies
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+        run: uv sync --locked --extra dev
 
       - name: Run pyright
-        run: pyright
+        run: uv run pyright
 
   format:
     name: format
@@ -105,13 +115,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
       - name: Install dependencies
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+        run: uv sync --locked --extra dev
 
       - name: Check formatting
         run: |
-          black --check .
-          isort --check-only .
+          uv run black --check .
+          uv run isort --check-only .
 
 
   changelog:
