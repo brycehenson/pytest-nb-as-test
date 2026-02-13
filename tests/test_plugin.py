@@ -139,16 +139,12 @@ def test_conftest_notebook_marker_behavior(pytester: pytest.Pytester) -> None:
         pytester.path / "conftest.py",
     )
     test_path = pytester.path / "test_regular.py"
-    test_path.write_text(
-        textwrap.dedent(
-            """
+    test_path.write_text(textwrap.dedent("""
             import os
 
             def test_regular_env_not_set() -> None:
                 assert os.environ.get("PYTEST_NOTEBOOK_FIXTURE") is None
-            """
-        ).lstrip()
-    )
+            """).lstrip())
     src = fixture_case_dir / "test_conftest_marker.ipynb"
     shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest_subprocess()
@@ -168,14 +164,10 @@ def test_marker_expression_skips_notebooks(pytester: pytest.Pytester) -> None:
     src = notebooks_dir / "example_simple_123.ipynb"
     shutil.copy2(src, pytester.path / src.name)
     test_path = pytester.path / "test_regular.py"
-    test_path.write_text(
-        textwrap.dedent(
-            """
+    test_path.write_text(textwrap.dedent("""
             def test_regular() -> None:
                 assert True
-            """
-        ).lstrip()
-    )
+            """).lstrip())
     result = pytester.runpytest_subprocess("-m", "not notebook")
     result.assert_outcomes(passed=1, deselected=1)
 
@@ -368,14 +360,10 @@ def test_cli_overrides_ini_default_all(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "example_simple_123.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    pytester.makeini(
-        textwrap.dedent(
-            """
+    pytester.makeini(textwrap.dedent("""
             [pytest]
             notebook_default_all = false
-            """
-        ).lstrip()
-    )
+            """).lstrip())
     result = pytester.runpytest_subprocess()
     result.assert_outcomes(skipped=1)
 
@@ -594,6 +582,32 @@ def test_error_line_print_and_error(pytester: pytest.Pytester) -> None:
         result.stdout.str(),
         '> 3 | raise ValueError("error on this line")',
     )
+
+
+def test_multiprocessing_local_function_runs(pytester: pytest.Pytester) -> None:
+    """Regression: notebook-local multiprocessing target should execute cleanly.
+
+    This currently fails under the notebook wrapper because multiprocessing
+    cannot pickle a local function bound to ``run_notebook.<locals>``.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_multiprocessing_local_function_runs
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = (
+        notebooks_dir
+        / "error_cases"
+        / "test_failure_multiprocessing_local_function.ipynb"
+    )
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = pytester.runpytest_subprocess(*args)
+    result.assert_outcomes(passed=1)
 
 
 def test_notebook_timeout_directive_first_cell_only(

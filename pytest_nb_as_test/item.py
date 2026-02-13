@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import fnmatch
+import hashlib
+import importlib
 import inspect
 import os
 import re
+import sys
+import tempfile
 import traceback
+import types
+import uuid
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Coroutine, Dict, Iterable, cast
 
@@ -438,20 +445,187 @@ class NotebookItem(pytest.Function):
             return None
         return cast(Callable[[], Any], func)
 
+    def _load_sync_module_code(self) -> tuple[Any, Dict[str, Any]]:
+        """Compile sync notebook body for module-scope execution.
+
+        The generated sync script defines ``run_notebook`` and nests all cell
+        code inside it. For compatibility with ``multiprocessing`` pickling in
+        spawn/forkserver modes, top-level notebook function/class definitions
+        are rewritten to import from an importable helper module.
+
+        Returns:
+            Tuple of compiled code object and execution namespace.
+
+        Raises:
+            ValueError: If ``run_notebook`` is missing from the generated code.
+
+        Example:
+            code_obj, namespace = item._load_sync_module_code()
+        """
+        module_ast = ast.parse(
+            self._generated_code,
+            filename=str(self.path),
+            mode="exec",
+        )
+        run_notebook_def: ast.FunctionDef | None = None
+        non_wrapper_nodes: list[ast.stmt] = []
+        for node in module_ast.body:
+            if isinstance(node, ast.FunctionDef) and node.name == "run_notebook":
+                run_notebook_def = node
+                continue
+            non_wrapper_nodes.append(node)
+        if run_notebook_def is None:
+            raise ValueError("Generated notebook code does not define run_notebook")
+
+        helper_module_name = self._build_sync_helper_module(
+            non_wrapper_nodes=non_wrapper_nodes,
+            run_notebook_body=run_notebook_def.body,
+        )
+        rewritten_body = self._rewrite_sync_body_with_helper_imports(
+            run_notebook_body=run_notebook_def.body,
+            helper_module_name=helper_module_name,
+        )
+
+        timeout_controller = NotebookTimeoutController(
+            item=self,
+            timeout_config=self._timeout_config,
+            has_timeouts=self._has_timeouts,
+        )
+        unique_suffix = uuid.uuid4().hex
+        exec_module_name = (
+            f"_pytest_nb_as_test_exec_"
+            f"{self.path.stem}_{os.getpid()}_{unique_suffix}"
+        )
+        sync_module = types.ModuleType(exec_module_name)
+        sync_module.__file__ = str(self.path)
+        sys.modules[exec_module_name] = sync_module
+        namespace = cast(Dict[str, Any], sync_module.__dict__)
+        namespace["__name__"] = exec_module_name
+        namespace["__file__"] = str(self.path)
+        namespace["__notebook_timeout__"] = timeout_controller.cell_timeout_context
+
+        executable_module_ast = ast.Module(
+            body=[*non_wrapper_nodes, *rewritten_body],
+            type_ignores=list(module_ast.type_ignores),
+        )
+        ast.fix_missing_locations(executable_module_ast)
+        code_obj = compile(executable_module_ast, filename=str(self.path), mode="exec")
+        return code_obj, namespace
+
+    def _build_sync_helper_module(
+        self,
+        *,
+        non_wrapper_nodes: list[ast.stmt],
+        run_notebook_body: list[ast.stmt],
+    ) -> str | None:
+        """Create an importable helper module for top-level notebook definitions.
+
+        The helper module is used to host function/class objects so
+        ``multiprocessing`` can resolve them by ``module.name`` during pickling.
+
+        Args:
+            non_wrapper_nodes: Statements that appear before ``run_notebook``.
+            run_notebook_body: Statements inside ``run_notebook``.
+
+        Returns:
+            Helper module name when definitions exist, otherwise None.
+
+        Example:
+            module_name = item._build_sync_helper_module(
+                non_wrapper_nodes=[],
+                run_notebook_body=[],
+            )
+        """
+        definition_nodes: list[ast.stmt] = []
+        import_nodes: list[ast.stmt] = []
+        for node in run_notebook_body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                definition_nodes.append(node)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                import_nodes.append(node)
+        if not definition_nodes:
+            return None
+
+        future_nodes = [
+            node
+            for node in non_wrapper_nodes
+            if isinstance(node, ast.ImportFrom) and node.module == "__future__"
+        ]
+        helper_module_ast = ast.Module(
+            body=[*future_nodes, *import_nodes, *definition_nodes],
+            type_ignores=[],
+        )
+        ast.fix_missing_locations(helper_module_ast)
+        helper_source = ast.unparse(helper_module_ast) + "\n"
+        module_hash = hashlib.sha256(
+            f"{self.path.resolve()}:{self._generated_code}".encode("utf-8")
+        ).hexdigest()[:12]
+        module_name = f"_pytest_nb_as_test_defs_{self.path.stem}_{module_hash}"
+        helper_root = Path(tempfile.gettempdir()) / "pytest_nb_as_test_defs"
+        helper_root.mkdir(parents=True, exist_ok=True)
+        helper_file = helper_root / f"{module_name}.py"
+        helper_file.write_text(helper_source, encoding="utf-8")
+
+        helper_root_str = str(helper_root)
+        if helper_root_str not in sys.path:
+            sys.path.insert(0, helper_root_str)
+        importlib.invalidate_caches()
+        if module_name in sys.modules:
+            del sys.modules[module_name]
+        importlib.import_module(module_name)
+        return module_name
+
+    def _rewrite_sync_body_with_helper_imports(
+        self,
+        *,
+        run_notebook_body: list[ast.stmt],
+        helper_module_name: str | None,
+    ) -> list[ast.stmt]:
+        """Rewrite sync execution body to import helper definitions.
+
+        Args:
+            run_notebook_body: Statements inside ``run_notebook``.
+            helper_module_name: Optional helper module for definitions.
+
+        Returns:
+            Rewritten statements for module-scope execution.
+
+        Example:
+            body = item._rewrite_sync_body_with_helper_imports(
+                run_notebook_body=[],
+                helper_module_name=None,
+            )
+        """
+        if helper_module_name is None:
+            return run_notebook_body
+        rewritten_body: list[ast.stmt] = []
+        for node in run_notebook_body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                import_node = ast.ImportFrom(
+                    module=helper_module_name,
+                    names=[ast.alias(name=node.name, asname=None)],
+                    level=0,
+                )
+                rewritten_body.append(ast.copy_location(import_node, node))
+                continue
+            rewritten_body.append(node)
+        return rewritten_body
+
     def _run_notebook_sync(self) -> None:
         """Execute the generated notebook with synchronous control flow.
 
         Example:
             item._run_notebook_sync()
         """
-        func = self._load_run_notebook()
-        if func is None:
-            return None
         if self._is_async:
+            func = self._load_run_notebook()
+            if func is None:
+                return None
             async_func = cast(Callable[[], Coroutine[Any, Any, Any]], func)
             asyncio.run(async_func())
         else:
-            func()
+            code_obj, namespace = self._load_sync_module_code()
+            exec(code_obj, namespace)  # pylint: disable=exec-used
         return None
 
     async def _run_notebook_async(self) -> None:

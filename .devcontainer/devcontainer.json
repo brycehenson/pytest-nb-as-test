@@ -7,6 +7,9 @@
   "runArgs": [
     "--add-host=host.docker.internal:host-gateway"
   ],
+  "mounts": [
+    "source=${localEnv:HOME}/.codex,target=/home/vscode/.codex,type=bind,consistency=cached",
+  ],
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "customizations": {
     "vscode": {

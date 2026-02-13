@@ -31,10 +31,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       libnss3 libatk-bridge2.0-0 libcups2 libxcomposite1 libxdamage1 \
       libxfixes3 libxrandr2 libgbm1 libxkbcommon0 libpango-1.0-0 \
       libcairo2 libasound2 && \
-
-    echo "Requirements for pyenv" && \
-    apt-get install -y --no-install-recommends \
-      build-essential, git, curl, ca-certificates, zlib1g-dev, libssl-dev, libbz2-dev, libreadline-dev, libsqlite3-dev, libffi-dev, liblzma-dev, tk-dev, xz-utils
     echo "Adding the git command line completion" && \
     echo "source /usr/share/bash-completion/completions/git" >> ~/.bashrc && \
     echo "Silence git safe dir stuff" && \
@@ -46,8 +42,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     mkdir /root/setup_scripts && \
     echo "Done"
 
-# pyenv
-RUN git clone https://github.com/pyenv/pyenv.git /opt/pyenv
+# pyenv already cloned above
 # Expose pyenv to all users:
 ENV PYENV_ROOT=/opt/pyenv
 ENV PATH=/opt/pyenv/bin:/opt/pyenv/shims:$PATH
@@ -67,9 +62,6 @@ RUN echo "Run setup setup_scripts" && \
 
 COPY .devcontainer/chrome-kaleido /usr/local/bin/chrome-kaleido
 RUN chmod +x /usr/local/bin/chrome-kaleido
-
-ENV PYENV_ROOT=/opt/pyenv
-ENV PATH=/opt/pyenv/bin:/opt/pyenv/shims:$PATH
 
 ENV DISPLAY=:100
 ENV BROWSER_PATH=/usr/local/bin/chrome-kaleido

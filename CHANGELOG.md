@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project follows Semantic Versioning.
 
 ## Unreleased
+- fix notebook-local multiprocessing targets in sync execution by avoiding
+  `run_notebook.<locals>` definitions for pickled callables
+- harden sync notebook execution by generating an importable helper module for
+  top-level notebook function/class definitions and rewriting sync execution to
+  import from that module
+- isolate sync notebook execution state per run using unique module namespaces
+  to reduce cross-test symbol collisions and state leakage
 
 ## 0.1.7
 -  found error with pytest 7.1.0 and excluded it, broadened pytest
