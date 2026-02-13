@@ -17,6 +17,7 @@ TODO:
   - search/scheduling logic
 This way the planner just passes a list of versions ect to test
 """
+
 from __future__ import annotations
 
 import argparse
