@@ -19,9 +19,6 @@
       },
       "extensions": [
         "ms-python.python",
-        "ms-python.pylint",
-        "ms-python.black-formatter",
-        "ms-python.isort",
         "ms-toolsai.jupyter",
         "openai.chatgpt",
         "ms-python.vscode-pylance",

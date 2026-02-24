@@ -16,8 +16,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Main test suite on the default supported runtime.
   pytest:
-    name: pytest
+    name: Tests (Python 3.12)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -37,8 +38,9 @@ jobs:
       - name: Run pytest
         run: uv run pytest
 
+  # Compatibility test run against our lowest supported Python version.
   pytest-old-versions:
-    name: pytest-old-versions
+    name: Tests (Python 3.10 compatibility)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -61,8 +63,9 @@ jobs:
           uv run pytest
 
 
+  # Static analysis for code quality checks.
   pylint:
-    name: pylint
+    name: Lint (pylint)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -82,8 +85,9 @@ jobs:
       - name: Run pylint
         run: uv run pylint pytest_nb_as_test tests
 
+  # Type-checking validation.
   pyright:
-    name: pyright
+    name: Type Check (pyright)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -103,8 +107,9 @@ jobs:
       - name: Run pyright
         run: uv run pyright
 
+  # Formatting checks for Python files and notebooks.
   format:
-    name: format
+    name: Formatting Checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -133,7 +138,9 @@ jobs:
         run: uv run nbqa isort --check-only demos/*.ipynb
 
 
+  # Pull request gate: require CHANGELOG updates.
   changelog:
+    name: Changelog Check
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:

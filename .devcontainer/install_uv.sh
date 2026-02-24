@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-UV_VERSION="0.5.7"
+UV_VERSION="0.10.2"
 
 if ! command -v pipx &> /dev/null; then
     echo "pipx not found, installing uv with pip..."

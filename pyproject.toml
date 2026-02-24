@@ -19,7 +19,7 @@ dependencies = [
     "nbformat>=5.0.2,<5.11.0",  
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "ipykernel>=7.0.1,<8.0.0",
     "ipywidgets==8.1.7",
