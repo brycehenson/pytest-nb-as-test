@@ -139,12 +139,16 @@ def test_conftest_notebook_marker_behavior(pytester: pytest.Pytester) -> None:
         pytester.path / "conftest.py",
     )
     test_path = pytester.path / "test_regular.py"
-    test_path.write_text(textwrap.dedent("""
+    test_path.write_text(
+        textwrap.dedent(
+            """
             import os
 
             def test_regular_env_not_set() -> None:
                 assert os.environ.get("PYTEST_NOTEBOOK_FIXTURE") is None
-            """).lstrip())
+            """
+        ).lstrip()
+    )
     src = fixture_case_dir / "test_conftest_marker.ipynb"
     shutil.copy2(src, pytester.path / src.name)
     result = pytester.runpytest_subprocess()
@@ -164,10 +168,14 @@ def test_marker_expression_skips_notebooks(pytester: pytest.Pytester) -> None:
     src = notebooks_dir / "example_simple_123.ipynb"
     shutil.copy2(src, pytester.path / src.name)
     test_path = pytester.path / "test_regular.py"
-    test_path.write_text(textwrap.dedent("""
+    test_path.write_text(
+        textwrap.dedent(
+            """
             def test_regular() -> None:
                 assert True
-            """).lstrip())
+            """
+        ).lstrip()
+    )
     result = pytester.runpytest_subprocess("-m", "not notebook")
     result.assert_outcomes(passed=1, deselected=1)
 
@@ -360,10 +368,14 @@ def test_cli_overrides_ini_default_all(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "example_simple_123.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    pytester.makeini(textwrap.dedent("""
+    pytester.makeini(
+        textwrap.dedent(
+            """
             [pytest]
             notebook_default_all = false
-            """).lstrip())
+            """
+        ).lstrip()
+    )
     result = pytester.runpytest_subprocess()
     result.assert_outcomes(skipped=1)
 
