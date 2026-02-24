@@ -213,6 +213,15 @@ Each selected cell is preceded by a marker comment:
 
 Use this to correlate tracebacks with notebook cell indices.
 Here `<index>` is the notebook JSON cell index (zero-based, includes markdown/raw cells).
+
+## Multiprocessing scope
+
+Goal: multiprocessing behavior should match what works in a normal Jupyter notebook workflow, not exceed it.
+
+In practice, this means prioritising parity for notebook patterns that Jupyter kernels handle successfully (for example
+Linux `fork` with top-level notebook definitions), and not targeting broader support for patterns that are typically not
+reliable in Jupyter (for example `spawn`/`forkserver` importability edge cases, lambdas, nested callables).
+
 ## Versioning / API stability
 
 This project follows Semantic Versioning.

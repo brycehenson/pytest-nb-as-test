@@ -1,22 +1,32 @@
 """Notebook collection and execution for the pytest plugin."""
 
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
 import ast
 import asyncio
+import concurrent.futures
 import fnmatch
-import hashlib
-import importlib
 import inspect
+import multiprocessing as mp
 import os
 import re
 import sys
-import tempfile
 import traceback
 import types
-import uuid
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, ClassVar, Coroutine, Dict, Iterable, cast
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Coroutine,
+    Dict,
+    Iterable,
+    Iterator,
+    cast,
+)
 
 import nbformat  # type: ignore
 import pytest  # type: ignore
@@ -38,6 +48,386 @@ from .timeout import (
     NotebookTimeoutController,
     _has_pytest_timeout_hooks,
 )
+
+_SYNC_EXEC_MODULE_NAME = "pytest_nb_as_test.__nbast_main__"
+_SPAWN_START_METHODS = frozenset({"spawn", "forkserver"})
+_SPAWN_GUARDRAIL_MESSAGE = (
+    "spawn cannot pickle notebook defined callables, "
+    "put worker targets in an importable .py module"
+)
+
+
+class _NotebookPoolProxy:  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    """Proxy around ``multiprocessing`` pools with callable validation.
+
+    Example:
+        proxy = _NotebookPoolProxy(pool, "spawn", validator)
+    """
+
+    def __init__(
+        self,
+        pool: Any,
+        start_method: str,
+        validator: Callable[[Callable[..., Any], str], None],
+    ) -> None:
+        self._pool = pool
+        self._start_method = start_method
+        self._validator = validator
+
+    def _check_callable(self, func: Callable[..., Any]) -> None:
+        """Validate a worker callable before dispatch.
+
+        Args:
+            func: Worker callable submitted to the pool.
+
+        Example:
+            self._check_callable(worker)
+        """
+        self._validator(func, self._start_method)
+
+    def apply(
+        self, func: Callable[..., Any], args: Any = (), kwds: Any | None = None
+    ) -> Any:
+        """Proxy ``Pool.apply`` with validation.
+
+        Example:
+            result = proxy.apply(worker, args=(1,))
+        """
+        self._check_callable(func)
+        return self._pool.apply(func, args=args, kwds=kwds)
+
+    def apply_async(
+        self,
+        func: Callable[..., Any],
+        args: Any = (),
+        kwds: Any | None = None,
+        callback: Callable[..., Any] | None = None,
+        error_callback: Callable[..., Any] | None = None,
+    ) -> Any:
+        """Proxy ``Pool.apply_async`` with validation.
+
+        Example:
+            async_result = proxy.apply_async(worker, args=(1,))
+        """
+        self._check_callable(func)
+        return self._pool.apply_async(
+            func,
+            args=args,
+            kwds=kwds,
+            callback=callback,
+            error_callback=error_callback,
+        )
+
+    def map(
+        self,
+        func: Callable[..., Any],
+        iterable: Any,
+        chunksize: int | None = None,
+    ) -> Any:
+        """Proxy ``Pool.map`` with validation.
+
+        Example:
+            out = proxy.map(worker, [1, 2, 3])
+        """
+        self._check_callable(func)
+        return self._pool.map(func, iterable, chunksize=chunksize)
+
+    def map_async(
+        self,
+        func: Callable[..., Any],
+        iterable: Any,
+        chunksize: int | None = None,
+        callback: Callable[..., Any] | None = None,
+        error_callback: Callable[..., Any] | None = None,
+    ) -> Any:
+        """Proxy ``Pool.map_async`` with validation.
+
+        Example:
+            out = proxy.map_async(worker, [1, 2, 3])
+        """
+        self._check_callable(func)
+        return self._pool.map_async(
+            func,
+            iterable,
+            chunksize=chunksize,
+            callback=callback,
+            error_callback=error_callback,
+        )
+
+    def starmap(
+        self,
+        func: Callable[..., Any],
+        iterable: Any,
+        chunksize: int | None = None,
+    ) -> Any:
+        """Proxy ``Pool.starmap`` with validation.
+
+        Example:
+            out = proxy.starmap(worker, [(1,), (2,)])
+        """
+        self._check_callable(func)
+        return self._pool.starmap(func, iterable, chunksize=chunksize)
+
+    def starmap_async(
+        self,
+        func: Callable[..., Any],
+        iterable: Any,
+        chunksize: int | None = None,
+        callback: Callable[..., Any] | None = None,
+        error_callback: Callable[..., Any] | None = None,
+    ) -> Any:
+        """Proxy ``Pool.starmap_async`` with validation.
+
+        Example:
+            out = proxy.starmap_async(worker, [(1,), (2,)])
+        """
+        self._check_callable(func)
+        return self._pool.starmap_async(
+            func,
+            iterable,
+            chunksize=chunksize,
+            callback=callback,
+            error_callback=error_callback,
+        )
+
+    def imap(
+        self,
+        func: Callable[..., Any],
+        iterable: Any,
+        chunksize: int = 1,
+    ) -> Any:
+        """Proxy ``Pool.imap`` with validation.
+
+        Example:
+            out = proxy.imap(worker, [1, 2, 3])
+        """
+        self._check_callable(func)
+        return self._pool.imap(func, iterable, chunksize=chunksize)
+
+    def imap_unordered(
+        self,
+        func: Callable[..., Any],
+        iterable: Any,
+        chunksize: int = 1,
+    ) -> Any:
+        """Proxy ``Pool.imap_unordered`` with validation.
+
+        Example:
+            out = proxy.imap_unordered(worker, [1, 2, 3])
+        """
+        self._check_callable(func)
+        return self._pool.imap_unordered(func, iterable, chunksize=chunksize)
+
+    def __enter__(self) -> _NotebookPoolProxy:
+        """Enter the proxied pool context.
+
+        Example:
+            with proxy as active:
+                ...
+        """
+        self._pool.__enter__()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: Any,
+    ) -> Any:
+        """Exit the proxied pool context.
+
+        Example:
+            proxy.__exit__(None, None, None)
+        """
+        return self._pool.__exit__(exc_type, exc, tb)
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate unknown attributes to the underlying pool.
+
+        Args:
+            name: Attribute name.
+
+        Example:
+            state = proxy._state
+        """
+        return getattr(self._pool, name)
+
+
+class _NotebookContextProxy:
+    """Proxy around ``multiprocessing`` context objects.
+
+    Example:
+        guarded = _NotebookContextProxy(ctx, "spawn", validator)
+    """
+
+    def __init__(
+        self,
+        context: Any,
+        start_method: str,
+        validator: Callable[[Callable[..., Any], str], None],
+    ) -> None:
+        self._context = context
+        self._start_method = start_method
+        self._validator = validator
+
+    def Pool(  # pylint: disable=invalid-name
+        self, *args: Any, **kwargs: Any
+    ) -> _NotebookPoolProxy:
+        """Create a guarded pool from the wrapped context.
+
+        Args:
+            *args: Positional arguments for ``context.Pool``.
+            **kwargs: Keyword arguments for ``context.Pool``.
+
+        Returns:
+            Guarded pool proxy.
+
+        Example:
+            pool = guarded.Pool(processes=2)
+        """
+        pool = self._context.Pool(*args, **kwargs)
+        return _NotebookPoolProxy(pool, self._start_method, self._validator)
+
+    def get_start_method(self, allow_none: bool = False) -> str:
+        """Return the wrapped context start method.
+
+        Args:
+            allow_none: Compatibility argument used by stdlib context APIs.
+
+        Example:
+            mode = guarded.get_start_method()
+        """
+        del allow_none
+        return self._start_method
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate unknown attributes to the wrapped context.
+
+        Args:
+            name: Attribute name.
+
+        Example:
+            proc = guarded.Process
+        """
+        return getattr(self._context, name)
+
+
+@contextmanager
+def _spawn_guard_context(
+    validator: Callable[[Callable[..., Any], str], None],
+    used_start_methods: set[str],
+) -> Iterator[None]:
+    """Patch pool constructors to validate notebook callables for spawn modes.
+
+    Args:
+        validator: Callback used to validate submitted worker callables.
+        used_start_methods: Collector for observed start methods.
+
+    Yields:
+        None.
+
+    Example:
+        with _spawn_guard_context(validator, methods):
+            ...
+    """
+    original_get_context = mp.get_context
+    original_pool = mp.Pool
+    original_executor = concurrent.futures.ProcessPoolExecutor
+
+    def _resolve_start_method(context: Any | None = None) -> str:
+        if context is None:
+            return cast(str, original_get_context().get_start_method())
+        return cast(str, context.get_start_method())
+
+    def _record_start_method(start_method: str) -> str:
+        used_start_methods.add(start_method)
+        return start_method
+
+    def guarded_get_context(method: str | None = None) -> _NotebookContextProxy:
+        context = original_get_context(method)
+        start_method = _record_start_method(cast(str, context.get_start_method()))
+        return _NotebookContextProxy(context, start_method, validator)
+
+    def guarded_pool(*args: Any, **kwargs: Any) -> _NotebookPoolProxy:
+        start_method = _record_start_method(_resolve_start_method())
+        pool = original_pool(*args, **kwargs)
+        return _NotebookPoolProxy(pool, start_method, validator)
+
+    class GuardedProcessPoolExecutor:  # pylint: disable=too-few-public-methods
+        """Proxy executor that validates submitted worker callables.
+
+        Example:
+            with GuardedProcessPoolExecutor(max_workers=2) as ex:
+                ex.map(fn, [1, 2, 3])
+        """
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            context = kwargs.get("mp_context")
+            start_method = _record_start_method(_resolve_start_method(context))
+            self._start_method = start_method
+            self._executor = original_executor(*args, **kwargs)
+
+        def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+            """Validate then proxy ``submit``.
+
+            Example:
+                fut = executor.submit(fn, 1)
+            """
+            validator(fn, self._start_method)
+            return self._executor.submit(fn, *args, **kwargs)
+
+        def map(self, fn: Callable[..., Any], /, *iterables: Any, **kwargs: Any) -> Any:
+            """Validate then proxy ``map``.
+
+            Example:
+                results = list(executor.map(fn, [1, 2]))
+            """
+            validator(fn, self._start_method)
+            return self._executor.map(fn, *iterables, **kwargs)
+
+        def __enter__(self) -> "GuardedProcessPoolExecutor":
+            """Enter the proxied executor context.
+
+            Example:
+                with executor as active:
+                    ...
+            """
+            self._executor.__enter__()
+            return self
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: Any,
+        ) -> Any:
+            """Exit the proxied executor context.
+
+            Example:
+                executor.__exit__(None, None, None)
+            """
+            return self._executor.__exit__(exc_type, exc, tb)
+
+        def __getattr__(self, name: str) -> Any:
+            """Delegate unknown attributes to the wrapped executor.
+
+            Args:
+                name: Attribute name.
+
+            Example:
+                shutdown = executor.shutdown
+            """
+            return getattr(self._executor, name)
+
+    try:
+        mp.get_context = guarded_get_context
+        mp.Pool = guarded_pool
+        concurrent.futures.ProcessPoolExecutor = GuardedProcessPoolExecutor
+        yield
+    finally:
+        mp.get_context = original_get_context
+        mp.Pool = original_pool
+        concurrent.futures.ProcessPoolExecutor = original_executor
 
 
 def pytest_collect_file(  # type: ignore[override]
@@ -454,9 +844,8 @@ class NotebookItem(pytest.Function):
         """Compile sync notebook body for module-scope execution.
 
         The generated sync script defines ``run_notebook`` and nests all cell
-        code inside it. For compatibility with ``multiprocessing`` pickling in
-        spawn/forkserver modes, top-level notebook function/class definitions
-        are rewritten to import from an importable helper module.
+        code inside it. This method flattens the wrapper body to module scope
+        to match notebook kernel semantics.
 
         Returns:
             Tuple of compiled code object and execution namespace.
@@ -482,139 +871,108 @@ class NotebookItem(pytest.Function):
         if run_notebook_def is None:
             raise ValueError("Generated notebook code does not define run_notebook")
 
-        helper_module_name = self._build_sync_helper_module(
-            non_wrapper_nodes=non_wrapper_nodes,
-            run_notebook_body=run_notebook_def.body,
-        )
-        rewritten_body = self._rewrite_sync_body_with_helper_imports(
-            run_notebook_body=run_notebook_def.body,
-            helper_module_name=helper_module_name,
-        )
-
         timeout_controller = NotebookTimeoutController(
             item=self,
             timeout_config=self._timeout_config,
             has_timeouts=self._has_timeouts,
         )
-        unique_suffix = uuid.uuid4().hex
-        exec_module_name = (
-            f"_pytest_nb_as_test_exec_"
-            f"{self.path.stem}_{os.getpid()}_{unique_suffix}"
-        )
-        sync_module = types.ModuleType(exec_module_name)
+        sync_module = types.ModuleType(_SYNC_EXEC_MODULE_NAME)
         sync_module.__file__ = str(self.path)
-        sys.modules[exec_module_name] = sync_module
+        sync_module.__package__ = "pytest_nb_as_test"
+        sys.modules[_SYNC_EXEC_MODULE_NAME] = sync_module
         namespace = cast(Dict[str, Any], sync_module.__dict__)
-        namespace["__name__"] = exec_module_name
+        namespace["__name__"] = _SYNC_EXEC_MODULE_NAME
         namespace["__file__"] = str(self.path)
         namespace["__notebook_timeout__"] = timeout_controller.cell_timeout_context
 
         executable_module_ast = ast.Module(
-            body=[*non_wrapper_nodes, *rewritten_body],
+            body=[*non_wrapper_nodes, *run_notebook_def.body],
             type_ignores=list(module_ast.type_ignores),
         )
         ast.fix_missing_locations(executable_module_ast)
         code_obj = compile(executable_module_ast, filename=str(self.path), mode="exec")
         return code_obj, namespace
 
-    def _build_sync_helper_module(
+    def _validate_spawn_callable(
         self,
-        *,
-        non_wrapper_nodes: list[ast.stmt],
-        run_notebook_body: list[ast.stmt],
-    ) -> str | None:
-        """Create an importable helper module for top-level notebook definitions.
-
-        The helper module is used to host function/class objects so
-        ``multiprocessing`` can resolve them by ``module.name`` during pickling.
+        func: Callable[..., Any],
+        start_method: str,
+    ) -> None:
+        """Validate worker targets submitted to process pools.
 
         Args:
-            non_wrapper_nodes: Statements that appear before ``run_notebook``.
-            run_notebook_body: Statements inside ``run_notebook``.
+            func: Worker callable.
+            start_method: Multiprocessing start method in use.
 
-        Returns:
-            Helper module name when definitions exist, otherwise None.
+        Raises:
+            RuntimeError: If a notebook-defined callable is used with
+                ``spawn`` or ``forkserver``.
 
         Example:
-            module_name = item._build_sync_helper_module(
-                non_wrapper_nodes=[],
-                run_notebook_body=[],
-            )
+            item._validate_spawn_callable(worker, "spawn")
         """
-        definition_nodes: list[ast.stmt] = []
-        import_nodes: list[ast.stmt] = []
-        for node in run_notebook_body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                definition_nodes.append(node)
-            elif isinstance(node, (ast.Import, ast.ImportFrom)):
-                import_nodes.append(node)
-        if not definition_nodes:
-            return None
+        if start_method not in _SPAWN_START_METHODS:
+            return
+        if getattr(func, "__module__", None) != _SYNC_EXEC_MODULE_NAME:
+            return
+        raise RuntimeError(_SPAWN_GUARDRAIL_MESSAGE)
 
-        future_nodes = [
-            node
-            for node in non_wrapper_nodes
-            if isinstance(node, ast.ImportFrom) and node.module == "__future__"
-        ]
-        helper_module_ast = ast.Module(
-            body=[*future_nodes, *import_nodes, *definition_nodes],
-            type_ignores=[],
-        )
-        ast.fix_missing_locations(helper_module_ast)
-        helper_source = ast.unparse(helper_module_ast) + "\n"
-        module_hash = hashlib.sha256(
-            f"{self.path.resolve()}:{self._generated_code}".encode("utf-8")
-        ).hexdigest()[:12]
-        module_name = f"_pytest_nb_as_test_defs_{self.path.stem}_{module_hash}"
-        helper_root = Path(tempfile.gettempdir()) / "pytest_nb_as_test_defs"
-        helper_root.mkdir(parents=True, exist_ok=True)
-        helper_file = helper_root / f"{module_name}.py"
-        helper_file.write_text(helper_source, encoding="utf-8")
-
-        helper_root_str = str(helper_root)
-        if helper_root_str not in sys.path:
-            sys.path.insert(0, helper_root_str)
-        importlib.invalidate_caches()
-        if module_name in sys.modules:
-            del sys.modules[module_name]
-        importlib.import_module(module_name)
-        return module_name
-
-    def _rewrite_sync_body_with_helper_imports(
-        self,
-        *,
-        run_notebook_body: list[ast.stmt],
-        helper_module_name: str | None,
-    ) -> list[ast.stmt]:
-        """Rewrite sync execution body to import helper definitions.
+    def _contains_spawn_module_error(self, error: BaseException) -> bool:
+        """Return True when an exception chain shows spawn import failures.
 
         Args:
-            run_notebook_body: Statements inside ``run_notebook``.
-            helper_module_name: Optional helper module for definitions.
+            error: Root exception raised while executing the notebook.
 
         Returns:
-            Rewritten statements for module-scope execution.
+            True when the chain contains a module import/pickling failure tied
+            to the notebook execution module.
 
         Example:
-            body = item._rewrite_sync_body_with_helper_imports(
-                run_notebook_body=[],
-                helper_module_name=None,
-            )
+            is_match = item._contains_spawn_module_error(exc)
         """
-        if helper_module_name is None:
-            return run_notebook_body
-        rewritten_body: list[ast.stmt] = []
-        for node in run_notebook_body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                import_node = ast.ImportFrom(
-                    module=helper_module_name,
-                    names=[ast.alias(name=node.name, asname=None)],
-                    level=0,
+        cursor: BaseException | None = error
+        seen: set[int] = set()
+        while cursor is not None and id(cursor) not in seen:
+            seen.add(id(cursor))
+            text = str(cursor)
+            if _SYNC_EXEC_MODULE_NAME in text and any(
+                token in text
+                for token in (
+                    "No module named",
+                    "ModuleNotFoundError",
+                    "Can't pickle",
+                    "Can't get attribute",
                 )
-                rewritten_body.append(ast.copy_location(import_node, node))
-                continue
-            rewritten_body.append(node)
-        return rewritten_body
+            ):
+                return True
+            next_cursor = cursor.__cause__
+            if next_cursor is None:
+                next_cursor = cursor.__context__
+            cursor = next_cursor
+        return False
+
+    def _normalize_spawn_error(
+        self,
+        error: BaseException,
+        used_start_methods: set[str],
+    ) -> BaseException | None:
+        """Normalize spawn/forkserver import errors to a concise message.
+
+        Args:
+            error: Root execution exception.
+            used_start_methods: Start methods observed while running a notebook.
+
+        Returns:
+            Replacement exception when normalization applies, else None.
+
+        Example:
+            normalized = item._normalize_spawn_error(exc, {"spawn"})
+        """
+        if not used_start_methods.intersection(_SPAWN_START_METHODS):
+            return None
+        if not self._contains_spawn_module_error(error):
+            return None
+        return RuntimeError(_SPAWN_GUARDRAIL_MESSAGE)
 
     def _run_notebook_sync(self) -> None:
         """Execute the generated notebook with synchronous control flow.
@@ -630,7 +988,21 @@ class NotebookItem(pytest.Function):
             asyncio.run(async_func())
         else:
             code_obj, namespace = self._load_sync_module_code()
-            exec(code_obj, namespace)  # pylint: disable=exec-used
+            used_start_methods: set[str] = set()
+            with _spawn_guard_context(
+                self._validate_spawn_callable,
+                used_start_methods,
+            ):
+                try:
+                    exec(code_obj, namespace)  # pylint: disable=exec-used
+                except Exception as error:  # pylint: disable=broad-exception-caught
+                    normalized = self._normalize_spawn_error(
+                        error=error,
+                        used_start_methods=used_start_methods,
+                    )
+                    if normalized is not None:
+                        raise normalized from error
+                    raise
         return None
 
     def _find_cell_span(self, line_no: int) -> CellCodeSpan | None:
