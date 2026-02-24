@@ -25,6 +25,7 @@ and this project follows Semantic Versioning.
 - development tooling:
   - add `pre-commit`, `nbstripout-fast`, and `nbdime` to the `dev` dependency
     group in `pyproject.toml`
+- update version in `pyproject.toml`
 
 ## 0.1.7
 -  found error with pytest 7.1.0 and excluded it, broadened pytest
