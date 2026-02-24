@@ -16,9 +16,67 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Main test suite on the default supported runtime.
+  # Compatibility matrix over supported Python and pytest versions.
   pytest:
-    name: Tests (Python 3.12)
+    name: Tests (Python ${{ matrix.python-version }}, pytest ${{ matrix.pytest-label }})
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental || false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: "3.10"
+            pytest-spec: "pytest==7.0.0"
+            pytest-label: "7.0.0 (min)"
+          - python-version: "3.10"
+            pytest-spec: "pytest<9.1.0"
+            pytest-label: "latest <9.1.0"
+          - python-version: "3.11"
+            pytest-spec: "pytest==7.0.0"
+            pytest-label: "7.0.0 (min)"
+          - python-version: "3.11"
+            pytest-spec: "pytest<9.1.0"
+            pytest-label: "latest <9.1.0"
+          - python-version: "3.12"
+            pytest-spec: "pytest==7.0.0"
+            pytest-label: "7.0.0 (min)"
+          - python-version: "3.12"
+            pytest-spec: "pytest<9.1.0"
+            pytest-label: "latest <9.1.0"
+          - python-version: "3.13"
+            pytest-spec: "pytest<9.1.0"
+            pytest-label: "latest <9.1.0"
+          - python-version: "3.14"
+            pytest-spec: "pytest<9.1.0"
+            pytest-label: "latest <9.1.0"
+            experimental: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          allow-prereleases: true
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --frozen  --group dev
+
+      - name: Select pytest version for this matrix entry
+        run: uv pip install --upgrade "${{ matrix.pytest-spec }}"
+
+      - name: Run pytest
+        run: |
+          uv run pytest --version
+          uv run pytest
+
+  # Coverage report from one canonical runtime.
+  pytest-coverage:
+    name: Coverage (Python 3.12, latest pytest)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -35,32 +93,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen  --group dev
 
-      - name: Run pytest
+      - name: Ensure latest supported pytest
+        run: uv pip install --upgrade "pytest<9.1.0"
+
+      - name: Run pytest with coverage
         run: uv run pytest --cov --cov-report=lcov:lcov.info --cov-report=term
-
-  # Compatibility test run against our lowest supported Python version.
-  pytest-old-versions:
-    name: Tests (Python 3.10 compatibility)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Install dependencies
-        run: uv sync --frozen  --group dev
-
-      - name: Run pytest
-        run: |
-          uv run pytest --version
-          uv run pytest
 
   # Ensure the package still works when pytest-xdist is not installed.
   pytest-no-xdist:
