@@ -1,16 +1,19 @@
 # syntax=docker/dockerfile:1.5
-FROM mcr.microsoft.com/devcontainers/python:3.12
+# Use the minimal base image instead of devcontainers/python so we control
+# exactly which Python/tools are installed and avoid preinstalled pipx tools
+# under /usr/local/py-utils shadowing project-pinned versions (e.g., black).
+FROM mcr.microsoft.com/devcontainers/base:debian
 
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     curl --silent --head --fail --connect-timeout 5 https://deb.debian.org/debian/ >/dev/null && \
-    apt-get update &&\
-    echo "Removing the debian system python since we don't need two pythons" && \
-    apt-get -y remove python3 && sudo apt-get -y autoremove && \
+    apt-get update && \
+    echo "Installing system python and core tools" && \
+    apt-get install -y --no-install-recommends python3 python3-pip python3-venv python3-dev && \
     echo "Adding ping and curl!" && \
-    apt-get update && apt-get -y install iputils-ping curl && \
+    apt-get install -y iputils-ping curl && \
     echo "Adding lnav for log viewing" &&\
     apt-get -y install lnav && \
     echo "Adding bc command line calculator" &&\
@@ -31,23 +34,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       libnss3 libatk-bridge2.0-0 libcups2 libxcomposite1 libxdamage1 \
       libxfixes3 libxrandr2 libgbm1 libxkbcommon0 libpango-1.0-0 \
       libcairo2 libasound2 && \
-
-    echo "Requirements for pyenv" && \
-    apt-get install -y --no-install-recommends \
-      build-essential, git, curl, ca-certificates, zlib1g-dev, libssl-dev, libbz2-dev, libreadline-dev, libsqlite3-dev, libffi-dev, liblzma-dev, tk-dev, xz-utils
     echo "Adding the git command line completion" && \
     echo "source /usr/share/bash-completion/completions/git" >> ~/.bashrc && \
     echo "Silence git safe dir stuff" && \
     git config --system --add safe.directory '*' && \
-    echo "installing pre-commit and notebook tools for git" && \
-    pipx install --global nbstripout-fast nbdime pre-commit && \
     echo "Cleanup apt" && \
     apt-get autoremove -y && \
     mkdir /root/setup_scripts && \
     echo "Done"
 
-# pyenv
-RUN git clone https://github.com/pyenv/pyenv.git /opt/pyenv
+# pyenv already cloned above
 # Expose pyenv to all users:
 ENV PYENV_ROOT=/opt/pyenv
 ENV PATH=/opt/pyenv/bin:/opt/pyenv/shims:$PATH
@@ -67,9 +63,6 @@ RUN echo "Run setup setup_scripts" && \
 
 COPY .devcontainer/chrome-kaleido /usr/local/bin/chrome-kaleido
 RUN chmod +x /usr/local/bin/chrome-kaleido
-
-ENV PYENV_ROOT=/opt/pyenv
-ENV PATH=/opt/pyenv/bin:/opt/pyenv/shims:$PATH
 
 ENV DISPLAY=:100
 ENV BROWSER_PATH=/usr/local/bin/chrome-kaleido

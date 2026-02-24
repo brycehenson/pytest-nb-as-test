@@ -596,6 +596,32 @@ def test_error_line_print_and_error(pytester: pytest.Pytester) -> None:
     )
 
 
+def test_multiprocessing_local_function_runs(pytester: pytest.Pytester) -> None:
+    """Regression: notebook-local multiprocessing target should execute cleanly.
+
+    This currently fails under the notebook wrapper because multiprocessing
+    cannot pickle a local function bound to ``run_notebook.<locals>``.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_multiprocessing_local_function_runs
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = (
+        notebooks_dir
+        / "error_cases"
+        / "test_failure_multiprocessing_local_function.ipynb"
+    )
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = pytester.runpytest_subprocess(*args)
+    result.assert_outcomes(passed=1)
+
+
 def test_notebook_timeout_directive_first_cell_only(
     pytester: pytest.Pytester,
 ) -> None:

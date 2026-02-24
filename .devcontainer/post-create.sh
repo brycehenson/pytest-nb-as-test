@@ -8,9 +8,10 @@ if ! ping -c 1 -W 2 google.com >/dev/null 2>&1; then
 fi
 
 
-echo "[post-create] Installing project dependencies with uv (system site-packages)"
-UV_PROJECT_ENVIRONMENT="$(python -c "import sysconfig; print(sysconfig.get_config_var('prefix'))")" \
-  uv sync --extra dev
+echo "[post-create] Installing from uv.lock into system Python with uv sync"
+# Sync from lockfile into the system interpreter prefix (includes the project + dev group).
+UV_PROJECT_ENVIRONMENT="$(python3 -c 'import sys; print(sys.base_prefix)')" \
+uv sync --frozen --group dev --no-managed-python
 
 
 # Setup some git settings to make it work out of the box
@@ -18,8 +19,6 @@ git config --global --add safe.directory ${WorkspaceFolder}
 
 # Merge by default
 git config pull.rebase false
-# Install stripping of outputs for ipynb
-git config --local include.path "../.devcontainer/clear_ipynb_output.gitconfig" || true
 
 # setup the git pre-commit hooks
 pre-commit install

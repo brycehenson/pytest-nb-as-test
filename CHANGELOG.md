@@ -7,6 +7,25 @@ and this project follows Semantic Versioning.
 
 ## Unreleased
 
+
+## 0.1.8
+- fix notebook-local multiprocessing targets in sync execution by avoiding
+  `run_notebook.<locals>` definitions for pickled callables
+- harden sync notebook execution by generating an importable helper module for
+  top-level notebook function/class definitions and rewriting sync execution to
+  import from that module
+- isolate sync notebook execution state per run using unique module namespaces
+  to reduce cross-test symbol collisions and state leakage
+- update uv package manager
+- devcontainer:
+  - switch to `mcr.microsoft.com/devcontainers/base:debian` and install system
+    Python/tooling explicitly to avoid conflicts from preinstalled `pipx` tools
+  - remove ad-hoc git tool installs from the Dockerfile and rely on project
+    dependency management
+- development tooling:
+  - add `pre-commit`, `nbstripout-fast`, and `nbdime` to the `dev` dependency
+    group in `pyproject.toml`
+
 ## 0.1.7
 -  found error with pytest 7.1.0 and excluded it, broadened pytest
   versions  "pytest>=2.1.0,<9.0.2,!=7.1.0,!=3.2.4,!=2.0.3"
