@@ -135,7 +135,7 @@ jobs:
         run: uv run isort --check-only .
 
       - name: nbqa isort
-        run: uv run nbqa isort --check-only demos/*.ipynb
+        run: uv run nbqa isort --check-only tests/
 
 
   # Pull request gate: require CHANGELOG updates.
