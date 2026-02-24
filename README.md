@@ -51,6 +51,21 @@ Disable notebook collection and execution:
 pytest -p no:pytest_nb_as_test
 ```
 
+## IPython Runtime Compatibility
+
+`pytest-nb-as-test` executes transformed Python code in-process under pytest.
+It does **not** execute notebooks through a live IPython/Jupyter kernel.
+
+Current contract:
+
+- Lines that start with `%`, `%%`, or `!` are commented out before execution.
+- `get_ipython()` and IPython globals (`In`, `Out`, `_ih`, `_oh`, `_dh`) are not provided by the runtime.
+
+When either behavior is detected, the plugin emits a `PytestWarning` during collection so it is visible in pytest output.
+
+Implication: a notebook can pass while skipping notebook-only side effects from magics or shell escapes.
+If you need strict kernel-faithful semantics, use a kernel-based plugin such as `pytest-nbmake`.
+
 ## Cell directives
 
 Directives live in comments inside *code* cells.

@@ -8,8 +8,8 @@ asserts on the outcome or output.  The notebooks reside in the
 
 if you want to run a different python version
 ```
-uv sync --frozen --group dev --python 3.14
-uv run --python 3.14 pytest .
+uv sync --frozen --group dev --python 3.12
+uv run --python 3.12 pytest .
 ```
 """
 
@@ -23,8 +23,11 @@ import re
 import shutil
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+import pytest_nb_as_test.plugin as plugin_module
 
 
 def _pytest_xdist_available() -> bool:
@@ -43,6 +46,65 @@ SPAWN_GUARDRAIL_MESSAGE = (
     "spawn cannot pickle notebook defined callables, "
     "put worker targets in an importable .py module"
 )
+
+
+def test_pytest_configure_rejects_incompatible_pytest_asyncio_pair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Raise UsageError for known incompatible pytest/pytest-asyncio versions.
+
+    Args:
+        monkeypatch: Fixture for patching module attributes.
+
+    Example:
+        pytest -k test_pytest_configure_rejects_incompatible_pytest_asyncio_pair
+    """
+
+    monkeypatch.setattr(plugin_module.pytest, "__version__", "9.0.2")
+    monkeypatch.setattr(
+        plugin_module.importlib_metadata,
+        "version",
+        lambda _: "0.23.3",
+    )
+    config = SimpleNamespace(
+        pluginmanager=SimpleNamespace(hasplugin=lambda name: name == "asyncio"),
+        addinivalue_line=lambda _key, _value: None,
+    )
+
+    with pytest.raises(
+        pytest.UsageError,
+        match="Unsupported plugin combination detected",
+    ):
+        plugin_module.pytest_configure(config)
+
+
+def test_pytest_configure_allows_compatible_pytest_asyncio_pair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Allow marker registration when plugin versions are compatible.
+
+    Args:
+        monkeypatch: Fixture for patching module attributes.
+
+    Example:
+        pytest -k test_pytest_configure_allows_compatible_pytest_asyncio_pair
+    """
+
+    monkeypatch.setattr(plugin_module.pytest, "__version__", "9.0.2")
+    monkeypatch.setattr(
+        plugin_module.importlib_metadata,
+        "version",
+        lambda _: "1.3.0",
+    )
+    added_lines: list[tuple[str, str]] = []
+    config = SimpleNamespace(
+        pluginmanager=SimpleNamespace(hasplugin=lambda name: name == "asyncio"),
+        addinivalue_line=lambda key, value: added_lines.append((key, value)),
+    )
+    plugin_module.pytest_configure(config)
+    assert added_lines == [
+        ("markers", "notebook: mark test as generated from a Jupyter notebook")
+    ]
 
 
 def assert_output_line(output: str, expected_line: str) -> None:
@@ -404,6 +466,8 @@ def test_strip_line_magics(pytester: pytest.Pytester) -> None:
     gen_dir.mkdir()
     result = pytester.runpytest_subprocess(f"--notebook-keep-generated={gen_dir}")
     result.assert_outcomes(passed=1)
+    output = result.stdout.str() + result.stderr.str()
+    assert "commented out IPython magics/shell escapes" in output
     # one file should be generated
     gen_files = list(gen_dir.glob("*.py"))
     assert gen_files, "No generated script produced"
@@ -437,6 +501,80 @@ def test_strip_indented_magics(pytester: pytest.Pytester) -> None:
     content = gen_files[0].read_text()
     assert "#%time" in content
     assert '#!echo "hello from shell"' in content
+
+
+def test_warn_on_get_ipython_and_ipython_globals(pytester: pytest.Pytester) -> None:
+    """Warn when a notebook references unsupported IPython runtime globals.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_warn_on_get_ipython_and_ipython_globals
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "test_get_ipython_globals.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    result = pytester.runpytest_subprocess()
+    result.assert_outcomes(passed=1)
+    output = result.stdout.str() + result.stderr.str()
+    assert "references IPython runtime symbol(s)" in output
+    assert "get_ipython()" in output
+    assert "In" in output
+
+
+def test_warn_on_get_ipython_call(pytester: pytest.Pytester) -> None:
+    """Warn when notebook code calls ``get_ipython()``.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_warn_on_get_ipython_call
+    """
+    notebook_path = pytester.path / "test_get_ipython_only.ipynb"
+    notebook_path.write_text(
+        textwrap.dedent(
+            """
+            {
+              "cells": [
+                {
+                  "cell_type": "code",
+                  "execution_count": null,
+                  "id": "get-ipython-only",
+                  "metadata": {},
+                  "outputs": [],
+                  "source": [
+                    "try:\\n",
+                    "    get_ipython().run_line_magic(\\"time\\", \\"x = sum(range(10))\\")\\n",
+                    "except NameError:\\n",
+                    "    pass\\n",
+                    "print(\\"ok\\")\\n"
+                  ]
+                }
+              ],
+              "metadata": {
+                "kernelspec": {
+                  "display_name": "Python 3",
+                  "language": "python",
+                  "name": "python3"
+                },
+                "language_info": {
+                  "name": "python"
+                }
+              },
+              "nbformat": 4,
+              "nbformat_minor": 5
+            }
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+    result = pytester.runpytest_subprocess()
+    result.assert_outcomes(passed=1)
+    output = result.stdout.str() + result.stderr.str()
+    assert "references IPython runtime symbol(s)" in output
+    assert "get_ipython()" in output
 
 
 def test_cli_default_all_false(pytester: pytest.Pytester) -> None:
@@ -541,6 +679,34 @@ def test_auto_exec_mode(pytester: pytest.Pytester) -> None:
     assert gen_files, "No generated script for async notebook produced"
     async_content = gen_files[0].read_text()
     assert "async def run_notebook():" in async_content
+
+
+def test_auto_exec_mode_detects_async_for_and_with(
+    pytester: pytest.Pytester,
+) -> None:
+    """Detect async wrappers for notebooks without explicit ``await``.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_auto_exec_mode_detects_async_for_and_with
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "hard_async_detection.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    gen_dir = pytester.path / "generated"
+    gen_dir.mkdir()
+
+    result = pytester.runpytest_subprocess(
+        "--notebook-exec-mode=auto",
+        f"--notebook-keep-generated={gen_dir}",
+    )
+    result.assert_outcomes(passed=1)
+    gen_files = list(gen_dir.glob("*hard_async_detection*.py"))
+    assert gen_files, "No generated script for hard async notebook produced"
+    content = gen_files[0].read_text()
+    assert "async def run_notebook():" in content
 
 
 def test_sync_exec_mode(pytester: pytest.Pytester) -> None:
@@ -691,6 +857,66 @@ def test_error_line_print_and_error(pytester: pytest.Pytester) -> None:
         result.stdout.str(),
         '> 3 | raise ValueError("error on this line")',
     )
+
+
+def test_main_guard_notebook_semantics_error(pytester: pytest.Pytester) -> None:
+    """Show the ``__name__ == "__main__"`` guard mismatch for notebook execution.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_main_guard_notebook_semantics_error
+    """
+    notebook_path = pytester.path / "test_failure_main_guard.ipynb"
+    notebook_path.write_text(
+        textwrap.dedent(
+            """
+            {
+              "cells": [
+                {
+                  "cell_type": "code",
+                  "execution_count": null,
+                  "id": "main-guard-error",
+                  "metadata": {},
+                  "outputs": [],
+                  "source": [
+                    "def main():\\n",
+                    "    globals()['main_guard_marker'] = True\\n",
+                    "\\n",
+                    "if __name__ == \\"__main__\\":\\n",
+                    "    main()\\n",
+                    "\\n",
+                    "assert globals().get('main_guard_marker') is True, (\\n",
+                    "    \\"expected __name__ == '__main__' guard to execute\\"\\n",
+                    ")\\n"
+                  ]
+                }
+              ],
+              "metadata": {
+                "kernelspec": {
+                  "display_name": "Python 3",
+                  "language": "python",
+                  "name": "python3"
+                },
+                "language_info": {
+                  "name": "python"
+                }
+              },
+              "nbformat": 4,
+              "nbformat_minor": 5
+            }
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+    args = ("-s", notebook_path.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = pytester.runpytest_subprocess(*args)
+    result.assert_outcomes(failed=1)
+    output = result.stdout.str() + result.stderr.str()
+    assert "expected __name__ == '__main__' guard to execute" in output
 
 
 def test_error_case_asyncio_processpool_fork_notebook_worker(

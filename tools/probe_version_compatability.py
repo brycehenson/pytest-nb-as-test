@@ -415,13 +415,19 @@ def _resolve_python_cmd(
         candidate: str = f"python{major_minor}"
         resolved_candidate: Optional[str] = shutil.which(candidate)
         if resolved_candidate is not None:
-            if patch is None:
+            got: Optional[str] = _interpreter_version(resolved_candidate)
+            if patch is None and got is not None and got.startswith(f"{major_minor}."):
                 return [resolved_candidate]
 
-            want: str = f"{major_minor}.{patch}"
-            got: Optional[str] = _interpreter_version(resolved_candidate)
-            if got == want:
-                return [resolved_candidate]
+            if patch is not None:
+                want: str = f"{major_minor}.{patch}"
+                if got == want:
+                    return [resolved_candidate]
+
+        if patch is not None:
+            resolved_exact: Optional[str] = shutil.which(f"python{major_minor}.{patch}")
+            if resolved_exact is not None:
+                return [resolved_exact]
 
         if platform.system().lower().startswith("win"):
             launcher = shutil.which("py")
@@ -502,11 +508,61 @@ def _current_installed_version(dist_name: str) -> Optional[str]:
         return None
 
 
+def _ensure_pip_for_current_interpreter() -> None:
+    """Ensure the current interpreter can run ``python -m pip``.
+
+    When pip is missing, this bootstraps it via ``ensurepip`` and verifies
+    that ``pip`` is available afterwards.
+
+    Raises:
+        RuntimeError: If pip is missing and bootstrapping fails.
+
+    Example:
+        _ensure_pip_for_current_interpreter()
+    """
+    cwd: Path = Path.cwd()
+    env: dict[str, str] = os.environ.copy()
+    check_cmd: list[str] = [sys.executable, "-m", "pip", "--version"]
+    check_proc: subprocess.CompletedProcess[str] = _run(
+        check_cmd, cwd=cwd, env=env, check=False
+    )
+    if check_proc.returncode == 0:
+        return
+
+    combined_output: str = f"{check_proc.stdout}\n{check_proc.stderr}"
+    if "No module named pip" not in combined_output:
+        return
+
+    ensure_cmd: list[str] = [sys.executable, "-m", "ensurepip", "--upgrade"]
+    ensure_proc: subprocess.CompletedProcess[str] = _run(
+        ensure_cmd, cwd=cwd, env=env, check=False
+    )
+    if ensure_proc.returncode != 0:
+        raise RuntimeError(
+            "Current interpreter is missing `pip`, and `ensurepip` failed.\n"
+            f"pip check stdout:\n{check_proc.stdout}\n\n"
+            f"pip check stderr:\n{check_proc.stderr}\n\n"
+            f"ensurepip stdout:\n{ensure_proc.stdout}\n\n"
+            f"ensurepip stderr:\n{ensure_proc.stderr}\n"
+        )
+
+    recheck_proc: subprocess.CompletedProcess[str] = _run(
+        check_cmd, cwd=cwd, env=env, check=False
+    )
+    if recheck_proc.returncode != 0:
+        raise RuntimeError(
+            "Bootstrapped pip with `ensurepip`, but `python -m pip` still failed.\n"
+            f"stdout:\n{recheck_proc.stdout}\n\nstderr:\n{recheck_proc.stderr}\n"
+        )
+
+
 def _available_versions_via_pip_index(dist_name: str) -> list[str]:
     """Return versions for a dist via pip index, newest first.
 
     Tries JSON output first, falls back to parsing human output.
     """
+    _ensure_pip_for_current_interpreter()
+
     cmd_json: list[str] = [
         sys.executable,
         "-m",
@@ -1511,6 +1567,12 @@ def main() -> int:
         help="Arguments passed to pytest, default is `-c <devnull>`. All remaining arguments after this flag are passed to pytest.",
     )
     parser.add_argument(
+        "--pytest-fail-fast",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Pass pytest `-x` to stop on the first test failure within each probe run.",
+    )
+    parser.add_argument(
         "--walk-major-then-refine",
         action="store_true",
         help=(
@@ -1560,7 +1622,10 @@ def main() -> int:
     keep_failed_venv: bool = bool(args.keep_failed_venv)
     hide_failed_output: bool = bool(args.hide_failed_output)
     extra_install: list[str] = list(args.extra_install)
-    pytest_cmd: list[str] = ["-m", "pytest", *list(args.pytest_args)]
+    pytest_args: list[str] = list(args.pytest_args)
+    if bool(args.pytest_fail_fast):
+        pytest_args = ["-x", *pytest_args]
+    pytest_cmd: list[str] = ["-m", "pytest", *pytest_args]
     verbose: int = int(args.verbose)
     stop_on_first_fail: bool = bool(args.stop_on_first_fail)
     walk_major_then_refine: bool = bool(args.walk_major_then_refine)

@@ -10,6 +10,8 @@ and this project follows Semantic Versioning.
 - add clear guardrails for `spawn`/`forkserver` multiprocessing with notebook-defined callables
 - improve directive parsing by rejecting directives indented by more than 4 spaces
 - improve directive parsing by allowing trailing inline comments in directive values
+- document IPython runtime compatibility limits (magics/shell escapes, `get_ipython`, IPython globals)
+- emit pytest warnings when magics/shell escapes are commented out or IPython runtime globals are referenced
 - add notebook regression tests for multiprocessing + async cases, guardrail failures, and directive parsing edge cases
 - expand CI coverage across Python 3.10 to 3.14 and min/latest supported pytest versions
 - add a Windows CI test job (Python 3.14, latest supported pytest)

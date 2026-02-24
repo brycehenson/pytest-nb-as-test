@@ -71,8 +71,8 @@ jobs:
 
       - name: Run pytest
         run: |
-          uv run pytest --version
-          uv run pytest
+          uv run --no-sync pytest --version
+          uv run --no-sync pytest
 
   # Windows coverage for platform-specific behavior.
   pytest-windows:
@@ -93,9 +93,6 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --frozen --group dev
-
-      - name: Ensure latest supported pytest
-        run: uv pip install --upgrade "pytest<9.1.0"
 
       - name: Run pytest
         run: |
@@ -120,9 +117,6 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --frozen  --group dev
-
-      - name: Ensure latest supported pytest
-        run: uv pip install --upgrade "pytest<9.1.0"
 
       - name: Run pytest with coverage
         run: uv run pytest --cov --cov-report=lcov:lcov.info --cov-report=term
