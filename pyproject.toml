@@ -64,5 +64,8 @@ build-backend = "setuptools.build_meta"
 where = ["."]
 include = ["pytest_nb_as_test"]
 
+[tool.uv]
+default-groups = []
+
 [tool.isort]
 profile = "black"
