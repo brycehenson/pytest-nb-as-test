@@ -36,7 +36,7 @@ jobs:
         run: uv sync --frozen  --group dev
 
       - name: Run pytest
-        run: uv run pytest
+        run: uv run pytest --cov --cov-report=lcov:lcov.info --cov-report=term
 
   # Compatibility test run against our lowest supported Python version.
   pytest-old-versions:
@@ -61,6 +61,32 @@ jobs:
         run: |
           uv run pytest --version
           uv run pytest
+
+  # Ensure the package still works when pytest-xdist is not installed.
+  pytest-no-xdist:
+    name: Tests (no xdist smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install runtime dependencies only
+        run: uv sync --frozen
+
+      - name: Verify pytest-xdist is not installed
+        run: |
+          uv run python -c "import importlib.util,sys;sys.exit(0 if importlib.util.find_spec('xdist') is None else 1)"
+
+      - name: Run smoke pytest without repository config
+        run: uv run pytest -c /dev/null tests/test_plugin.py -k test_run_simple_notebook
 
 
   # Static analysis for code quality checks.

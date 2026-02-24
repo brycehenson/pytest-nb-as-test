@@ -10,6 +10,17 @@ authors = [
     { name = "Bryce Henson", email = "pytest-nb-as-test+bryce.m.henson@gmail.com" },
 ]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Framework :: Pytest",
+    "Topic :: Software Development :: Testing",
 ]
 urls = { Homepage = "https://github.com/brycehenson/pytest-nb-as-test" }
 dependencies = [
@@ -56,7 +67,3 @@ include = ["pytest_nb_as_test"]
 
 [tool.isort]
 profile = "black"
-
-
-[tool.pytest.ini_options]
-addopts = "--cov --cov-report=lcov:lcov.info --cov-report=term"

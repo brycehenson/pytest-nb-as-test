@@ -344,10 +344,6 @@ class NotebookFile(pytest.File):
             timeout_config=timeout_config,
             has_timeouts=has_timeouts,
         )
-        # Mark with @pytest.mark.asyncio only if:
-        # 1. Code is async, AND
-        # 2. pytest-asyncio is installed, AND
-        # 3. pytest-asyncio is NOT in auto mode (auto mode doesn't work well with bound methods)
         item.add_marker("notebook")
         return [item]
 
@@ -356,8 +352,8 @@ class NotebookItem(pytest.Function):
     """A pytest Item representing a single notebook.
 
     Each NotebookItem contains the generated Python code for a notebook and
-    executes it via a callobj that is either synchronous or asynchronous,
-    depending on execution mode and plugin availability.
+    executes it through a single synchronous pytest call path. Async notebook
+    wrappers are executed with ``asyncio.run`` when needed.
 
     Example:
         item = NotebookItem.from_parent(parent, name="example.ipynb::notebook")
@@ -627,18 +623,6 @@ class NotebookItem(pytest.Function):
             code_obj, namespace = self._load_sync_module_code()
             exec(code_obj, namespace)  # pylint: disable=exec-used
         return None
-
-    async def _run_notebook_async(self) -> None:
-        """Execute the generated notebook under pytest-asyncio.
-
-        Example:
-            await item._run_notebook_async()
-        """
-        func = self._load_run_notebook()
-        if func is None:
-            return None
-        async_func = cast(Callable[[], Coroutine[Any, Any, Any]], func)
-        await async_func()
 
     def _find_cell_span(self, line_no: int) -> CellCodeSpan | None:
         """Find the cell span that contains a generated line number.

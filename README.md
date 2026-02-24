@@ -212,7 +212,7 @@ Each selected cell is preceded by a marker comment:
 ```
 
 Use this to correlate tracebacks with notebook cell indices.
-
+Here `<index>` is the notebook JSON cell index (zero-based, includes markdown/raw cells).
 ## Versioning / API stability
 
 This project follows Semantic Versioning.
@@ -264,11 +264,15 @@ notebook tests via the `notebook` marker.
 ### NumPy RNG: seed and ensure it is unused
 
 ```python
+from collections.abc import Generator
+
 import pytest
 
 
 @pytest.fixture(autouse=True)
-def seed_and_lock_numpy_rng(request: pytest.FixtureRequest) -> None:
+def seed_and_lock_numpy_rng(
+    request: pytest.FixtureRequest,
+) -> Generator[None, None, None]:
     if request.node.get_closest_marker("notebook") is None:
         yield
         return
@@ -296,11 +300,15 @@ def seed_and_lock_numpy_rng(request: pytest.FixtureRequest) -> None:
 ### Matplotlib backend
 
 ```python
+from collections.abc import Generator
+
 import pytest
 
 
 @pytest.fixture(autouse=True)
-def set_matplotlib_backend(request: pytest.FixtureRequest) -> None:
+def set_matplotlib_backend(
+    request: pytest.FixtureRequest,
+) -> Generator[None, None, None]:
     if request.node.get_closest_marker("notebook") is None:
         yield
         return
@@ -318,11 +326,16 @@ def set_matplotlib_backend(request: pytest.FixtureRequest) -> None:
 ### Plotly renderer
 
 ```python
+import os
+from collections.abc import Generator
+
 import pytest
 
 
 @pytest.fixture(autouse=True)
-def set_plotly_renderer(request: pytest.FixtureRequest) -> None:
+def set_plotly_renderer(
+    request: pytest.FixtureRequest,
+) -> Generator[None, None, None]:
     if request.node.get_closest_marker("notebook") is None:
         yield
         return
@@ -334,8 +347,6 @@ def set_plotly_renderer(request: pytest.FixtureRequest) -> None:
         return
 
     os.environ.setdefault("PLOTLY_RENDERER", "json")
-
-    import plotly.io as pio
 
     pio.renderers.default = "json"
     pio.renderers.render_on_display = False
