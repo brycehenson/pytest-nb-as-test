@@ -123,8 +123,14 @@ jobs:
 
       - name: Check formatting
         run: |
+          uv run black --version
           uv run black --check .
-          uv run isort --check-only .
+
+      - name: isort
+        run: uv run isort --check-only .
+
+      - name: nbqa isort
+        run: uv run nbqa isort --check-only demos/*.ipynb
 
 
   changelog:
