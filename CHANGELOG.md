@@ -6,18 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project follows Semantic Versioning.
 
 ## Unreleased
-- devcontainer:
-  - switch to `mcr.microsoft.com/devcontainers/base:debian` and install system
-    Python/tooling explicitly to avoid conflicts from preinstalled `pipx` tools
-  - remove ad-hoc git tool installs from the Dockerfile and rely on project
-    dependency management
-- development tooling:
-  - add `pre-commit`, `nbstripout-fast`, and `nbdime` to the `dev` dependency
-    group in `pyproject.toml`
-  - configure `pre-commit` to run `nbstripout-fast` on notebooks before formatters
-    (`black`, `isort`)
-  - simplify post-create setup by removing the extra `.gitconfig` include for
-    notebook output stripping and keeping hook installation via `pre-commit install`
+
 
 ## 0.1.8
 - fix notebook-local multiprocessing targets in sync execution by avoiding
@@ -28,6 +17,14 @@ and this project follows Semantic Versioning.
 - isolate sync notebook execution state per run using unique module namespaces
   to reduce cross-test symbol collisions and state leakage
 - update uv package manager
+- devcontainer:
+  - switch to `mcr.microsoft.com/devcontainers/base:debian` and install system
+    Python/tooling explicitly to avoid conflicts from preinstalled `pipx` tools
+  - remove ad-hoc git tool installs from the Dockerfile and rely on project
+    dependency management
+- development tooling:
+  - add `pre-commit`, `nbstripout-fast`, and `nbdime` to the `dev` dependency
+    group in `pyproject.toml`
 
 ## 0.1.7
 -  found error with pytest 7.1.0 and excluded it, broadened pytest
