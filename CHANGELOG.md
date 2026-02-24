@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project follows Semantic Versioning.
 
 ## Unreleased
+- improve notebook execution parity with Jupyter by executing generated notebook code at module scope
+- add clear guardrails for `spawn`/`forkserver` multiprocessing with notebook-defined callables
+- improve directive parsing by rejecting directives indented by more than 4 spaces
+- improve directive parsing by allowing trailing inline comments in directive values
+- add notebook regression tests for multiprocessing + async cases, guardrail failures, and directive parsing edge cases
+- expand CI coverage across Python 3.10 to 3.14 and min/latest supported pytest versions
+- add a Windows CI test job (Python 3.14, latest supported pytest)
+- add a CI smoke test without `pytest-xdist`
+- update packaging/project metadata (`MANIFEST.in`, PyPI classifiers, `uv` default groups)
+- fix tests/notebooks/test_multiprocessing_local_function.ipynb for py 3.14
+- add windows test
 
 
 ## 0.1.8

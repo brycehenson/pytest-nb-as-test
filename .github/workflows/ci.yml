@@ -74,6 +74,34 @@ jobs:
           uv run pytest --version
           uv run pytest
 
+  # Windows coverage for platform-specific behavior.
+  pytest-windows:
+    name: Tests (Windows, Python 3.14)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --frozen --group dev
+
+      - name: Ensure latest supported pytest
+        run: uv pip install --upgrade "pytest<9.1.0"
+
+      - name: Run pytest
+        run: |
+          uv run pytest --version
+          uv run pytest
+
   # Coverage report from one canonical runtime.
   pytest-coverage:
     name: Coverage (Python 3.12, latest pytest)

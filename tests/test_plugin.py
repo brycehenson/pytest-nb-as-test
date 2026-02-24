@@ -5,6 +5,12 @@ provided by pytest.  Each test copies a sample notebook into the temporary
 pytest environment, invokes pytest with appropriate options and then
 asserts on the outcome or output.  The notebooks reside in the
 `tests/notebooks` directory of this package.
+
+if you want to run a different python version
+```
+uv sync --frozen --group dev --python 3.14
+uv run --python 3.14 pytest .
+```
 """
 
 # pylint: disable=too-many-lines
