@@ -76,7 +76,7 @@ jobs:
 
   # Windows coverage for platform-specific behavior.
   pytest-windows:
-    name: Tests (Windows, Python 3.14)
+    name: Tests (Windows, Python 3.12)
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -85,7 +85,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: "3.12"
           allow-prereleases: true
 
       - name: Set up uv
@@ -165,7 +165,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5

@@ -48,7 +48,6 @@ dev = [
     "nbformat>=5.10.4,<6.0.0",
     "nbconvert>=7.16.6,<8.0.0",
     "pyright==1.1.408",
-    "numpy",
     "matplotlib",
     "plotly",
 ]
