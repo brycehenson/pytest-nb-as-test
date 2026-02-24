@@ -859,14 +859,14 @@ def test_error_line_print_and_error(pytester: pytest.Pytester) -> None:
     )
 
 
-def test_main_guard_notebook_semantics_error(pytester: pytest.Pytester) -> None:
-    """Show the ``__name__ == "__main__"`` guard mismatch for notebook execution.
+def test_main_guard_notebook_semantics_executes(pytester: pytest.Pytester) -> None:
+    """Execute notebook ``__name__ == "__main__"`` guard blocks.
 
     Args:
         pytester: Pytest fixture for running tests in a temporary workspace.
 
     Example:
-        pytest -k test_main_guard_notebook_semantics_error
+        pytest -k test_main_guard_notebook_semantics_executes
     """
     notebook_path = pytester.path / "test_failure_main_guard.ipynb"
     notebook_path.write_text(
@@ -914,9 +914,7 @@ def test_main_guard_notebook_semantics_error(pytester: pytest.Pytester) -> None:
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
     result = pytester.runpytest_subprocess(*args)
-    result.assert_outcomes(failed=1)
-    output = result.stdout.str() + result.stderr.str()
-    assert "expected __name__ == '__main__' guard to execute" in output
+    result.assert_outcomes(passed=1)
 
 
 def test_error_case_asyncio_processpool_fork_notebook_worker(
@@ -1127,6 +1125,104 @@ def test_process_pool_executor_spawn_notebook_callable_reports_guardrail(
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "error_cases" / "test_cfe_spawn_guardrail.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("--notebook-exec-mode=sync", "-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = pytester.runpytest_subprocess(*args)
+    result.assert_outcomes(failed=1)
+    assert_spawn_guardrail_message(result.stdout.str() + result.stderr.str())
+
+
+def test_mp_process_spawn_notebook_callable_reports_guardrail(
+    pytester: pytest.Pytester,
+) -> None:
+    """Fail fast for ``multiprocessing.Process`` spawn with notebook callables.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_mp_process_spawn_notebook_callable_reports_guardrail
+    """
+    if "spawn" not in MP_START_METHODS:
+        pytest.skip("spawn start method is unavailable on this platform.")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "error_cases" / "test_mp_process_spawn_guardrail.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("--notebook-exec-mode=sync", "-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = pytester.runpytest_subprocess(*args)
+    result.assert_outcomes(failed=1)
+    assert_spawn_guardrail_message(result.stdout.str() + result.stderr.str())
+
+
+def test_ctx_process_spawn_notebook_callable_reports_guardrail(
+    pytester: pytest.Pytester,
+) -> None:
+    """Fail fast for ``get_context('spawn').Process`` notebook callables.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_ctx_process_spawn_notebook_callable_reports_guardrail
+    """
+    if "spawn" not in MP_START_METHODS:
+        pytest.skip("spawn start method is unavailable on this platform.")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "error_cases" / "test_ctx_process_spawn_guardrail.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("--notebook-exec-mode=sync", "-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = pytester.runpytest_subprocess(*args)
+    result.assert_outcomes(failed=1)
+    assert_spawn_guardrail_message(result.stdout.str() + result.stderr.str())
+
+
+def test_mp_pool_import_path_spawn_notebook_callable_reports_guardrail(
+    pytester: pytest.Pytester,
+) -> None:
+    """Fail fast for ``from multiprocessing.pool import Pool`` spawn usage.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_mp_pool_import_path_spawn_notebook_callable_reports_guardrail
+    """
+    if "spawn" not in MP_START_METHODS:
+        pytest.skip("spawn start method is unavailable on this platform.")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = (
+        notebooks_dir / "error_cases" / "test_mp_pool_import_path_spawn_guardrail.ipynb"
+    )
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("--notebook-exec-mode=sync", "-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = pytester.runpytest_subprocess(*args)
+    result.assert_outcomes(failed=1)
+    assert_spawn_guardrail_message(result.stdout.str() + result.stderr.str())
+
+
+def test_cfe_import_path_spawn_notebook_callable_reports_guardrail(
+    pytester: pytest.Pytester,
+) -> None:
+    """Fail fast for ``from concurrent.futures.process`` spawn usage.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_cfe_import_path_spawn_notebook_callable_reports_guardrail
+    """
+    if "spawn" not in MP_START_METHODS:
+        pytest.skip("spawn start method is unavailable on this platform.")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "error_cases" / "test_cfe_import_path_spawn_guardrail.ipynb"
     shutil.copy2(src, pytester.path / src.name)
     args = ("--notebook-exec-mode=sync", "-s", src.name)
     if PYTEST_XDIST_AVAILABLE:

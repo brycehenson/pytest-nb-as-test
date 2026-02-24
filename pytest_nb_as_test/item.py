@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import ast
 import asyncio
-import concurrent.futures
+import concurrent.futures.process as concurrent_futures_process
 import fnmatch
 import inspect
 import multiprocessing as mp
+import multiprocessing.pool as multiprocessing_pool
+import multiprocessing.process as multiprocessing_process
 import os
 import re
 import sys
@@ -50,6 +52,7 @@ from .timeout import (
 )
 
 _SYNC_EXEC_MODULE_NAME = "pytest_nb_as_test.__nbast_main__"
+_MAIN_MODULE_NAME = "__main__"
 _SPAWN_START_METHODS = frozenset({"spawn", "forkserver"})
 _SPAWN_GUARDRAIL_MESSAGE = (
     "spawn cannot pickle notebook defined callables, "
@@ -87,7 +90,10 @@ def _find_ipython_runtime_references(source: str) -> set[str]:
             visitor = _IPythonReferenceVisitor()
         """
 
-        def visit_Call(self, node: ast.Call) -> None:
+        def visit_Call(  # pylint: disable=invalid-name
+            self,
+            node: ast.Call,
+        ) -> None:
             """Record ``get_ipython()`` calls.
 
             Args:
@@ -100,7 +106,10 @@ def _find_ipython_runtime_references(source: str) -> set[str]:
                 references.add("get_ipython()")
             self.generic_visit(node)
 
-        def visit_Name(self, node: ast.Name) -> None:
+        def visit_Name(  # pylint: disable=invalid-name
+            self,
+            node: ast.Name,
+        ) -> None:
             """Record reads of known IPython globals.
 
             Args:
@@ -480,11 +489,11 @@ class _NotebookContextProxy:
 
 
 @contextmanager
-def _spawn_guard_context(
+def _spawn_guard_context(  # pylint: disable=too-many-locals
     validator: Callable[[Callable[..., Any], str], None],
     used_start_methods: set[str],
 ) -> Iterator[None]:
-    """Patch pool constructors to validate notebook callables for spawn modes.
+    """Patch multiprocessing entry points to validate spawn worker callables.
 
     Args:
         validator: Callback used to validate submitted worker callables.
@@ -499,7 +508,22 @@ def _spawn_guard_context(
     """
     original_get_context = mp.get_context
     original_pool = mp.Pool
-    original_executor = concurrent.futures.ProcessPoolExecutor
+    pool_method_names = (
+        "apply",
+        "apply_async",
+        "map",
+        "map_async",
+        "starmap",
+        "starmap_async",
+        "imap",
+        "imap_unordered",
+    )
+    original_pool_methods = {
+        name: getattr(multiprocessing_pool.Pool, name) for name in pool_method_names
+    }
+    original_process_start = multiprocessing_process.BaseProcess.start
+    original_executor_submit = concurrent_futures_process.ProcessPoolExecutor.submit
+    original_executor_map = concurrent_futures_process.ProcessPoolExecutor.map
 
     def _resolve_start_method(context: Any | None = None) -> str:
         if context is None:
@@ -510,91 +534,120 @@ def _spawn_guard_context(
         used_start_methods.add(start_method)
         return start_method
 
-    def guarded_get_context(method: str | None = None) -> _NotebookContextProxy:
+    def _resolve_pool_start_method(pool: Any) -> str:
+        pool_context = getattr(pool, "_ctx", None)
+        if pool_context is None:
+            return _record_start_method(_resolve_start_method())
+        return _record_start_method(_resolve_start_method(pool_context))
+
+    def _resolve_process_start_method(process: Any) -> str:
+        process_start_method = getattr(type(process), "_start_method", None)
+        if isinstance(process_start_method, str):
+            return _record_start_method(process_start_method)
+        process_context = getattr(process, "_ctx", None)
+        if process_context is not None:
+            return _record_start_method(_resolve_start_method(process_context))
+        return _record_start_method(_resolve_start_method())
+
+    def guarded_get_context(method: str | None = None) -> Any:
         context = original_get_context(method)
-        start_method = _record_start_method(cast(str, context.get_start_method()))
-        return _NotebookContextProxy(context, start_method, validator)
+        _record_start_method(cast(str, context.get_start_method()))
+        return context
 
-    def guarded_pool(*args: Any, **kwargs: Any) -> _NotebookPoolProxy:
-        start_method = _record_start_method(_resolve_start_method())
-        pool = original_pool(*args, **kwargs)
-        return _NotebookPoolProxy(pool, start_method, validator)
+    def guarded_pool(*args: Any, **kwargs: Any) -> Any:
+        _record_start_method(_resolve_start_method())
+        return original_pool(*args, **kwargs)
 
-    class GuardedProcessPoolExecutor:  # pylint: disable=too-few-public-methods
-        """Proxy executor that validates submitted worker callables.
+    def guarded_process_start(self: Any) -> Any:
+        target = getattr(self, "_target", None)
+        start_method = _resolve_process_start_method(self)
+        if callable(target):
+            validator(cast(Callable[..., Any], target), start_method)
+        return original_process_start(self)
 
-        Example:
-            with GuardedProcessPoolExecutor(max_workers=2) as ex:
-                ex.map(fn, [1, 2, 3])
-        """
+    def _make_guarded_pool_method(name: str) -> Callable[..., Any]:
+        original_method = original_pool_methods[name]
 
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            context = kwargs.get("mp_context")
-            start_method = _record_start_method(_resolve_start_method(context))
-            self._start_method = start_method
-            self._executor = original_executor(*args, **kwargs)
-
-        def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
-            """Validate then proxy ``submit``.
-
-            Example:
-                fut = executor.submit(fn, 1)
-            """
-            validator(fn, self._start_method)
-            return self._executor.submit(fn, *args, **kwargs)
-
-        def map(self, fn: Callable[..., Any], /, *iterables: Any, **kwargs: Any) -> Any:
-            """Validate then proxy ``map``.
-
-            Example:
-                results = list(executor.map(fn, [1, 2]))
-            """
-            validator(fn, self._start_method)
-            return self._executor.map(fn, *iterables, **kwargs)
-
-        def __enter__(self) -> "GuardedProcessPoolExecutor":
-            """Enter the proxied executor context.
-
-            Example:
-                with executor as active:
-                    ...
-            """
-            self._executor.__enter__()
-            return self
-
-        def __exit__(
-            self,
-            exc_type: type[BaseException] | None,
-            exc: BaseException | None,
-            tb: Any,
+        def guarded_method(
+            self: multiprocessing_pool.Pool,
+            func: Callable[..., Any],
+            *args: Any,
+            **kwargs: Any,
         ) -> Any:
-            """Exit the proxied executor context.
+            validator(func, _resolve_pool_start_method(self))
+            return original_method(self, func, *args, **kwargs)
 
-            Example:
-                executor.__exit__(None, None, None)
-            """
-            return self._executor.__exit__(exc_type, exc, tb)
+        return guarded_method
 
-        def __getattr__(self, name: str) -> Any:
-            """Delegate unknown attributes to the wrapped executor.
+    def guarded_executor_submit(
+        self: concurrent_futures_process.ProcessPoolExecutor,
+        fn: Callable[..., Any],
+        /,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        context = getattr(self, "_mp_context", None)
+        validator(fn, _record_start_method(_resolve_start_method(context)))
+        return original_executor_submit(self, fn, *args, **kwargs)
 
-            Args:
-                name: Attribute name.
-
-            Example:
-                shutdown = executor.shutdown
-            """
-            return getattr(self._executor, name)
+    def guarded_executor_map(
+        self: concurrent_futures_process.ProcessPoolExecutor,
+        fn: Callable[..., Any],
+        /,
+        *iterables: Any,
+        **kwargs: Any,
+    ) -> Any:
+        context = getattr(self, "_mp_context", None)
+        validator(fn, _record_start_method(_resolve_start_method(context)))
+        return original_executor_map(self, fn, *iterables, **kwargs)
 
     try:
         mp.get_context = guarded_get_context
         mp.Pool = guarded_pool
-        concurrent.futures.ProcessPoolExecutor = GuardedProcessPoolExecutor
+        multiprocessing_process.BaseProcess.start = guarded_process_start
+        for method_name in pool_method_names:
+            setattr(
+                multiprocessing_pool.Pool,
+                method_name,
+                _make_guarded_pool_method(method_name),
+            )
+        concurrent_futures_process.ProcessPoolExecutor.submit = guarded_executor_submit
+        concurrent_futures_process.ProcessPoolExecutor.map = guarded_executor_map
         yield
     finally:
         mp.get_context = original_get_context
         mp.Pool = original_pool
-        concurrent.futures.ProcessPoolExecutor = original_executor
+        multiprocessing_process.BaseProcess.start = original_process_start
+        for method_name, original_method in original_pool_methods.items():
+            setattr(multiprocessing_pool.Pool, method_name, original_method)
+        concurrent_futures_process.ProcessPoolExecutor.submit = original_executor_submit
+        concurrent_futures_process.ProcessPoolExecutor.map = original_executor_map
+
+
+@contextmanager
+def _main_module_context(notebook_module: types.ModuleType) -> Iterator[None]:
+    """Temporarily expose notebook execution module as ``__main__``.
+
+    Args:
+        notebook_module: Runtime module for the executing notebook.
+
+    Yields:
+        None.
+
+    Example:
+        with _main_module_context(module):
+            exec(code_obj, module.__dict__)
+    """
+    had_main_module = _MAIN_MODULE_NAME in sys.modules
+    previous_main_module = sys.modules.get(_MAIN_MODULE_NAME)
+    sys.modules[_MAIN_MODULE_NAME] = notebook_module
+    try:
+        yield
+    finally:
+        if had_main_module and previous_main_module is not None:
+            sys.modules[_MAIN_MODULE_NAME] = previous_main_module
+        else:
+            sys.modules.pop(_MAIN_MODULE_NAME, None)
 
 
 def pytest_collect_file(  # type: ignore[override]
@@ -852,7 +905,8 @@ class NotebookFile(pytest.File):
                 pytest.PytestWarning(
                     f"Notebook {self.path.name}: references IPython runtime symbol(s) "
                     f"{symbol_names} in cell(s) {referenced_cells}. pytest-nb-as-test "
-                    "does not provide a Jupyter/IPython shell context. See pytest-nb-as-test README "
+                    "does not provide a Jupyter/IPython shell context. "
+                    "See pytest-nb-as-test README "
                     "'IPython Runtime Compatibility'."
                 )
             )
@@ -1075,7 +1129,7 @@ class NotebookItem(pytest.Function):
         sync_module.__package__ = "pytest_nb_as_test"
         sys.modules[_SYNC_EXEC_MODULE_NAME] = sync_module
         namespace = cast(Dict[str, Any], sync_module.__dict__)
-        namespace["__name__"] = _SYNC_EXEC_MODULE_NAME
+        namespace["__name__"] = _MAIN_MODULE_NAME
         namespace["__file__"] = str(self.path)
         namespace["__notebook_timeout__"] = timeout_controller.cell_timeout_context
 
@@ -1113,7 +1167,10 @@ class NotebookItem(pytest.Function):
         """
         if start_method not in _SPAWN_START_METHODS:
             return
-        if getattr(func, "__module__", None) != _SYNC_EXEC_MODULE_NAME:
+        if getattr(func, "__module__", None) not in {
+            _SYNC_EXEC_MODULE_NAME,
+            _MAIN_MODULE_NAME,
+        }:
             return
         raise RuntimeError(_SPAWN_GUARDRAIL_MESSAGE)
 
@@ -1135,7 +1192,7 @@ class NotebookItem(pytest.Function):
         while cursor is not None and id(cursor) not in seen:
             seen.add(id(cursor))
             text = str(cursor)
-            if _SYNC_EXEC_MODULE_NAME in text and any(
+            if (_SYNC_EXEC_MODULE_NAME in text or _MAIN_MODULE_NAME in text) and any(
                 token in text
                 for token in (
                     "No module named",
@@ -1183,33 +1240,35 @@ class NotebookItem(pytest.Function):
         code_obj, namespace = self._load_module_code(
             allow_top_level_await=self._is_async
         )
+        notebook_module = cast(types.ModuleType, sys.modules[_SYNC_EXEC_MODULE_NAME])
         used_start_methods: set[str] = set()
-        with _spawn_guard_context(
-            self._validate_spawn_callable,
-            used_start_methods,
-        ):
-            try:
-                if self._is_async:
-                    maybe_coroutine = eval(  # pylint: disable=eval-used
-                        code_obj,
-                        namespace,
-                    )
-                    if inspect.iscoroutine(maybe_coroutine):
-                        async_result = cast(
-                            Coroutine[Any, Any, Any],
-                            maybe_coroutine,
+        with _main_module_context(notebook_module):
+            with _spawn_guard_context(
+                self._validate_spawn_callable,
+                used_start_methods,
+            ):
+                try:
+                    if self._is_async:
+                        maybe_coroutine = eval(  # pylint: disable=eval-used
+                            code_obj,
+                            namespace,
                         )
-                        asyncio.run(async_result)
-                else:
-                    exec(code_obj, namespace)  # pylint: disable=exec-used
-            except Exception as error:  # pylint: disable=broad-exception-caught
-                normalized = self._normalize_spawn_error(
-                    error=error,
-                    used_start_methods=used_start_methods,
-                )
-                if normalized is not None:
-                    raise normalized from error
-                raise
+                        if inspect.iscoroutine(maybe_coroutine):
+                            async_result = cast(
+                                Coroutine[Any, Any, Any],
+                                maybe_coroutine,
+                            )
+                            asyncio.run(async_result)
+                    else:
+                        exec(code_obj, namespace)  # pylint: disable=exec-used
+                except Exception as error:  # pylint: disable=broad-exception-caught
+                    normalized = self._normalize_spawn_error(
+                        error=error,
+                        used_start_methods=used_start_methods,
+                    )
+                    if normalized is not None:
+                        raise normalized from error
+                    raise
 
     def _find_cell_span(self, line_no: int) -> CellCodeSpan | None:
         """Find the cell span that contains a generated line number.

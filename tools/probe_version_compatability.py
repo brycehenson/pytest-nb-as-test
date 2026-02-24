@@ -34,8 +34,11 @@ import tempfile
 import threading
 import time
 from dataclasses import dataclass
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Optional, Sequence
+
+# pylint: disable=too-many-lines
 
 
 @dataclass(frozen=True)
@@ -354,10 +357,10 @@ def _interpreter_version(python_exe: str) -> Optional[str]:
         [
             python_exe,
             "-c",
-            (
-                "import sys; "
-                "print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')"
-            ),
+            "import sys; "
+            "print("
+            "f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}'"
+            ")",
         ],
         cwd=Path.cwd(),
         env=os.environ.copy(),
@@ -371,7 +374,7 @@ def _interpreter_version(python_exe: str) -> Optional[str]:
     return out
 
 
-def _resolve_python_cmd(
+def _resolve_python_cmd(  # pylint: disable=too-many-return-statements,too-many-branches,too-many-locals
     python_exe: Optional[str], python_version: Optional[str]
 ) -> list[str]:
     """Resolve the python command used to create new venvs.
@@ -501,10 +504,8 @@ def _base_env_for_venv(venv_dir: Path) -> dict[str, str]:
 def _current_installed_version(dist_name: str) -> Optional[str]:
     """Return the installed version of a dist if available in this interpreter, else None."""
     try:
-        from importlib import metadata as importlib_metadata  # py312+
-
         return importlib_metadata.version(dist_name)
-    except Exception:
+    except importlib_metadata.PackageNotFoundError:
         return None
 
 
@@ -584,7 +585,7 @@ def _available_versions_via_pip_index(dist_name: str) -> list[str]:
                     isinstance(v, str) for v in versions_obj
                 ):
                     return list(versions_obj)
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             pass
 
     cmd_text: list[str] = [sys.executable, "-m", "pip", "index", "versions", dist_name]
@@ -650,7 +651,9 @@ def _versions_for_major(versions: Sequence[str], major: str) -> list[str]:
         List of matching versions ordered newest-first.
 
     Example:
-        _versions_for_major(["8.4.2", "8.4.1", "8.3.0", "7.2.0"], "8") == ["8.4.2", "8.4.1", "8.3.0"]
+        _versions_for_major(
+            ["8.4.2", "8.4.1", "8.3.0", "7.2.0"], "8"
+        ) == ["8.4.2", "8.4.1", "8.3.0"]
     """
     matched: list[str] = []
     for version in versions:
@@ -799,14 +802,14 @@ def _setup_pytest_environment(
             install_stderr="".join(install_stderr),
         )
 
-    except Exception as e:
+    except (RuntimeError, OSError, ValueError) as err:
         return PreparedEnvironment(
             dist_name=dist_name,
             version=version,
             venv_dir=venv_dir,
             python_exe=vpy,
             setup_passed=False,
-            setup_error=f"Unexpected error during setup: {e}",
+            setup_error=f"Unexpected error during setup: {err}",
             install_stderr="".join(install_stderr),
         )
 
@@ -817,8 +820,6 @@ def _run_pytest_in_environment(
     project_root: Path,
     pytest_cmd: Sequence[str],
     keep_failed_venv: bool,
-    verbose: int = 0,
-    worker_id: int = -1,
 ) -> ProbeResult:
     """Run pytest in a prepared environment.
 
@@ -830,8 +831,6 @@ def _run_pytest_in_environment(
         project_root: Root directory of the project to test.
         pytest_cmd: Pytest command to run, excluding the python executable prefix.
         keep_failed_venv: If True, keep the venv directory when the probe fails.
-        verbose: Verbosity level for logging.
-        worker_id: Worker ID for logging purposes.
 
     Returns:
         ProbeResult containing pass/fail, outputs, and timing.
@@ -842,8 +841,6 @@ def _run_pytest_in_environment(
             project_root=Path("."),
             pytest_cmd=["-m", "pytest"],
             keep_failed_venv=False,
-            verbose=2,
-            worker_id=0
         )
     """
     t0: float = time.time()
@@ -851,19 +848,11 @@ def _run_pytest_in_environment(
     vpy: Path = prepared_env.python_exe
     env: dict[str, str] = _base_env_for_venv(venv_dir)
 
-    stdout_all: list[str] = []
-    stderr_all: list[str] = []
     passed: bool = False
-    returncode: int = 1
-    worker_prefix: str = (
-        f"[Exec Worker {worker_id}] " if worker_id >= 0 and verbose >= 2 else ""
-    )
 
     try:
         # If setup failed, return immediately with setup error
         if not prepared_env.setup_passed:
-            if verbose >= 2:
-                print(f"{worker_prefix}Setup failed for version {prepared_env.version}")
             return ProbeResult(
                 version=prepared_env.version,
                 passed=False,
@@ -890,7 +879,9 @@ def _run_pytest_in_environment(
         print(f"{dist_name} {ver_str}")
         if ver_proc.returncode != 0 or ver_str != prepared_env.version:
             raise RuntimeError(
-                f"Version drift: expected {dist_name} {prepared_env.version}, got {ver_proc.stdout.strip()!r}\n{ver_proc.stderr}"
+                "Version drift: "
+                f"expected {dist_name} {prepared_env.version}, "
+                f"got {ver_proc.stdout.strip()!r}\n{ver_proc.stderr}"
             )
 
         cache_dir: str = f"/tmp/pytest_cache/{prepared_env.version}"
@@ -900,26 +891,22 @@ def _run_pytest_in_environment(
             env=env,
             check=False,
         )
-        stdout_all.append(proc.stdout)
-        stderr_all.append(proc.stderr)
-
-        returncode = proc.returncode
         passed = proc.returncode == 0
         return ProbeResult(
             version=prepared_env.version,
             passed=passed,
-            returncode=returncode,
+            returncode=proc.returncode,
             duration_s=time.time() - t0,
             venv_dir=venv_dir,
-            stdout="".join(stdout_all),
-            stderr="".join(stderr_all) + prepared_env.install_stderr,
+            stdout=proc.stdout,
+            stderr=proc.stderr + prepared_env.install_stderr,
         )
     finally:
         if passed or not keep_failed_venv:
             shutil.rmtree(venv_dir, ignore_errors=True)
 
 
-def probe_pytest_version(
+def probe_pytest_version(  # pylint: disable=too-many-arguments
     *,
     project_root: Path,
     pytest_version: str,
@@ -972,7 +959,7 @@ def probe_pytest_version(
     )
 
 
-def _pipelined_parallel_probe(
+def _pipelined_parallel_probe(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches,too-many-statements
     *,
     versions: Sequence[str],
     project_root: Path,
@@ -1150,7 +1137,8 @@ def _pipelined_parallel_probe(
 
                     if verbose >= 2:
                         print(
-                            f"[Exec Worker {exec_worker_id}] Starting execution for version {prepared.version}"
+                            f"[Exec Worker {exec_worker_id}] "
+                            f"Starting execution for version {prepared.version}"
                         )
 
                     fut: cf.Future[ProbeResult] = exec_pool.submit(
@@ -1159,8 +1147,6 @@ def _pipelined_parallel_probe(
                         project_root=project_root,
                         pytest_cmd=pytest_cmd,
                         keep_failed_venv=keep_failed_venv,
-                        verbose=verbose,
-                        worker_id=exec_worker_id,
                     )
                     exec_futures[next_submit_index] = fut
                     future_to_index[fut] = next_submit_index
@@ -1264,7 +1250,7 @@ def _pipelined_parallel_probe(
     return out
 
 
-def _ordered_parallel_probe(
+def _ordered_parallel_probe(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
     *,
     versions: Sequence[str],
     project_root: Path,
@@ -1436,7 +1422,7 @@ def _print_probe_outcome(
         print(result.stderr.rstrip())
 
 
-def _print_final_report(
+def _print_final_report(  # pylint: disable=too-many-locals
     *,
     planned_versions: Sequence[str],
     all_versions: Sequence[str],
@@ -1506,7 +1492,9 @@ def _print_final_report(
         print("  " + ", ".join(additional_tested))
 
 
-def main() -> int:
+def main() -> (
+    int
+):  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     """Entry point for the pytest compatibility probe."""
     parser: argparse.ArgumentParser = argparse.ArgumentParser()
     parser.add_argument(
@@ -1564,7 +1552,10 @@ def main() -> int:
         "--pytest-args",
         nargs=argparse.REMAINDER,
         default=["-c", os.devnull],
-        help="Arguments passed to pytest, default is `-c <devnull>`. All remaining arguments after this flag are passed to pytest.",
+        help=(
+            "Arguments passed to pytest, default is `-c <devnull>`. "
+            "All remaining arguments after this flag are passed to pytest."
+        ),
     )
     parser.add_argument(
         "--pytest-fail-fast",
