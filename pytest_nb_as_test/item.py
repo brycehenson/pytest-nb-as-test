@@ -813,39 +813,20 @@ class NotebookItem(pytest.Function):
         """
         return self.path, 1, self.name
 
-    def _load_run_notebook(self) -> Callable[[], Any] | None:
-        """Compile the generated script and return the wrapper function.
-
-        Returns:
-            The ``run_notebook`` callable from the generated code, or None when
-            no callable was defined.
-
-        Example:
-            func = item._load_run_notebook()
-        """
-        namespace: Dict[str, Any] = {
-            "__name__": "__notebook__",
-            "__file__": str(self.path),
-        }
-        timeout_controller = NotebookTimeoutController(
-            item=self,
-            timeout_config=self._timeout_config,
-            has_timeouts=self._has_timeouts,
-        )
-        namespace["__notebook_timeout__"] = timeout_controller.cell_timeout_context
-        code_obj = compile(self._generated_code, filename=str(self.path), mode="exec")
-        exec(code_obj, namespace)  # pylint: disable=exec-used
-        func = namespace.get("run_notebook")
-        if not callable(func):
-            return None
-        return cast(Callable[[], Any], func)
-
-    def _load_sync_module_code(self) -> tuple[Any, Dict[str, Any]]:
-        """Compile sync notebook body for module-scope execution.
+    def _load_module_code(
+        self, *, allow_top_level_await: bool
+    ) -> tuple[Any, Dict[str, Any]]:
+        """Compile notebook body for module-scope execution.
 
         The generated sync script defines ``run_notebook`` and nests all cell
         code inside it. This method flattens the wrapper body to module scope
-        to match notebook kernel semantics.
+        to match notebook kernel semantics. When ``allow_top_level_await`` is
+        enabled, code is compiled with ``PyCF_ALLOW_TOP_LEVEL_AWAIT`` so async
+        notebooks preserve top-level global definitions.
+
+        Args:
+            allow_top_level_await: Whether to compile with support for top-level
+                ``await``.
 
         Returns:
             Tuple of compiled code object and execution namespace.
@@ -854,17 +835,22 @@ class NotebookItem(pytest.Function):
             ValueError: If ``run_notebook`` is missing from the generated code.
 
         Example:
-            code_obj, namespace = item._load_sync_module_code()
+            code_obj, namespace = item._load_module_code(
+                allow_top_level_await=True,
+            )
         """
         module_ast = ast.parse(
             self._generated_code,
             filename=str(self.path),
             mode="exec",
         )
-        run_notebook_def: ast.FunctionDef | None = None
+        run_notebook_def: ast.FunctionDef | ast.AsyncFunctionDef | None = None
         non_wrapper_nodes: list[ast.stmt] = []
         for node in module_ast.body:
-            if isinstance(node, ast.FunctionDef) and node.name == "run_notebook":
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == "run_notebook"
+            ):
                 run_notebook_def = node
                 continue
             non_wrapper_nodes.append(node)
@@ -890,7 +876,13 @@ class NotebookItem(pytest.Function):
             type_ignores=list(module_ast.type_ignores),
         )
         ast.fix_missing_locations(executable_module_ast)
-        code_obj = compile(executable_module_ast, filename=str(self.path), mode="exec")
+        compile_flags = ast.PyCF_ALLOW_TOP_LEVEL_AWAIT if allow_top_level_await else 0
+        code_obj = compile(
+            executable_module_ast,
+            filename=str(self.path),
+            mode="exec",
+            flags=compile_flags,
+        )
         return code_obj, namespace
 
     def _validate_spawn_callable(
@@ -980,30 +972,36 @@ class NotebookItem(pytest.Function):
         Example:
             item._run_notebook_sync()
         """
-        if self._is_async:
-            func = self._load_run_notebook()
-            if func is None:
-                return None
-            async_func = cast(Callable[[], Coroutine[Any, Any, Any]], func)
-            asyncio.run(async_func())
-        else:
-            code_obj, namespace = self._load_sync_module_code()
-            used_start_methods: set[str] = set()
-            with _spawn_guard_context(
-                self._validate_spawn_callable,
-                used_start_methods,
-            ):
-                try:
-                    exec(code_obj, namespace)  # pylint: disable=exec-used
-                except Exception as error:  # pylint: disable=broad-exception-caught
-                    normalized = self._normalize_spawn_error(
-                        error=error,
-                        used_start_methods=used_start_methods,
+        code_obj, namespace = self._load_module_code(
+            allow_top_level_await=self._is_async
+        )
+        used_start_methods: set[str] = set()
+        with _spawn_guard_context(
+            self._validate_spawn_callable,
+            used_start_methods,
+        ):
+            try:
+                if self._is_async:
+                    maybe_coroutine = eval(  # pylint: disable=eval-used
+                        code_obj,
+                        namespace,
                     )
-                    if normalized is not None:
-                        raise normalized from error
-                    raise
-        return None
+                    if inspect.iscoroutine(maybe_coroutine):
+                        async_result = cast(
+                            Coroutine[Any, Any, Any],
+                            maybe_coroutine,
+                        )
+                        asyncio.run(async_result)
+                else:
+                    exec(code_obj, namespace)  # pylint: disable=exec-used
+            except Exception as error:  # pylint: disable=broad-exception-caught
+                normalized = self._normalize_spawn_error(
+                    error=error,
+                    used_start_methods=used_start_methods,
+                )
+                if normalized is not None:
+                    raise normalized from error
+                raise
 
     def _find_cell_span(self, line_no: int) -> CellCodeSpan | None:
         """Find the cell span that contains a generated line number.
