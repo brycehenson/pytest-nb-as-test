@@ -144,6 +144,14 @@ class NotebookFile(pytest.File):
             source = cell.get("source", "")
             # parse directives
             directives: Dict[str, Any] = {}
+            over_indented_directive_pattern = (
+                r"^\s{5,}#\s{0,4}pytest-nb-as-test\s{0,4}:"
+            )
+            if re.search(over_indented_directive_pattern, source, flags=re.MULTILINE):
+                raise pytest.UsageError(
+                    "Directive lines may be indented by at most 4 leading spaces "
+                    f"in cell {idx} of {self.path}"
+                )
             directive_pattern = (
                 r"^\s{0,4}#\s{0,4}pytest-nb-as-test\s{0,4}:\s{0,4}"
                 r"([\w-]+)\s{0,4}=\s{0,4}(.+?)\s*$"
@@ -153,7 +161,8 @@ class NotebookFile(pytest.File):
                 source,
                 flags=re.MULTILINE,
             ):
-                flag, raw_val = match.group(1), match.group(2)
+                flag = match.group(1)
+                raw_val = re.sub(r"\s+#.*$", "", match.group(2)).strip()
                 if flag in directives:
                     raise pytest.UsageError(
                         f"Directive '{flag}' specified multiple times in cell {idx} of {self.path}"
