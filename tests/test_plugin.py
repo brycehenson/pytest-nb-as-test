@@ -289,10 +289,42 @@ def test_over_indented_directive_errors(pytester: pytest.Pytester) -> None:
     A directive line with 5 leading spaces should not be ignored silently;
     collection should fail with a ``UsageError`` that explains the limit.
     """
-    notebooks_dir = Path(__file__).parent / "notebooks"
-    src = notebooks_dir / "error_cases" / "test_over_indented_directive.ipynb"
-    shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    notebook_path = pytester.path / "test_over_indented_directive.ipynb"
+    notebook_path.write_text(
+        textwrap.dedent(
+            """
+            {
+              "cells": [
+                {
+                  "cell_type": "code",
+                  "execution_count": null,
+                  "id": "over-indented-directive",
+                  "metadata": {},
+                  "outputs": [],
+                  "source": [
+                    "     # pytest-nb-as-test: default-all=False\\n",
+                    "print(\\"hello\\")\\n"
+                  ]
+                }
+              ],
+              "metadata": {
+                "kernelspec": {
+                  "display_name": "Python 3",
+                  "language": "python",
+                  "name": "python3"
+                },
+                "language_info": {
+                  "name": "python"
+                }
+              },
+              "nbformat": 4,
+              "nbformat_minor": 5
+            }
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+    result = pytester.runpytest_subprocess(notebook_path.name)
     result.assert_outcomes(errors=1)
     output = result.stdout.str() + result.stderr.str()
     assert "Directive lines may be indented by at most 4 leading spaces" in output
@@ -655,6 +687,61 @@ def test_error_line_print_and_error(pytester: pytest.Pytester) -> None:
     )
 
 
+def test_error_case_asyncio_processpool_fork_notebook_worker(
+    pytester: pytest.Pytester,
+) -> None:
+    """Check failure output for fork ProcessPoolExecutor notebook worker case.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_error_case_asyncio_processpool_fork_notebook_worker
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = (
+        notebooks_dir
+        / "error_cases"
+        / "test_failure_asyncio_processpool_fork_notebook_worker.ipynb"
+    )
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = pytester.runpytest_subprocess(*args)
+    result.assert_outcomes(failed=1)
+    output = result.stdout.str()
+    assert "RuntimeError unexpected success" in output
+    assert_output_line(output, "> 1 | assert expected_error_seen is True")
+
+
+def test_error_case_asyncio_processpool_spawn_notebook_worker(
+    pytester: pytest.Pytester,
+) -> None:
+    """Run spawn ProcessPoolExecutor notebook error case with expected exception.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_error_case_asyncio_processpool_spawn_notebook_worker
+    """
+    if "spawn" not in MP_START_METHODS:
+        pytest.skip("spawn start method is unavailable on this platform.")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = (
+        notebooks_dir
+        / "error_cases"
+        / "test_failure_asyncio_processpool_spawn_notebook_worker.ipynb"
+    )
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = pytester.runpytest_subprocess(*args)
+    result.assert_outcomes(passed=1)
+
+
 def test_multiprocessing_local_function_runs(pytester: pytest.Pytester) -> None:
     """Regression: notebook-local multiprocessing target should execute cleanly.
 
@@ -692,6 +779,55 @@ def test_mp_fork_top_level_function_async_exec_mode_runs(
         pytest.skip("fork start method is unavailable on this platform.")
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_mp_fork_top_level_function_async_exec_mode.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("--notebook-exec-mode=async", "-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = pytester.runpytest_subprocess(*args)
+    result.assert_outcomes(passed=1)
+
+
+def test_asyncio_multiprocessing_pool_spawn_importable_worker_runs(
+    pytester: pytest.Pytester,
+) -> None:
+    """Run asyncio + spawn pool with an importable worker function.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_asyncio_multiprocessing_pool_spawn_importable_worker_runs
+    """
+    if "spawn" not in MP_START_METHODS:
+        pytest.skip("spawn start method is unavailable on this platform.")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = (
+        notebooks_dir
+        / "test_asyncio_multiprocessing_pool_spawn_importable_worker.ipynb"
+    )
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("--notebook-exec-mode=async", "-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = pytester.runpytest_subprocess(*args)
+    result.assert_outcomes(passed=1)
+
+
+def test_asyncio_processpool_spawn_importable_worker_runs(
+    pytester: pytest.Pytester,
+) -> None:
+    """Run asyncio + ProcessPoolExecutor(spawn) with an importable worker.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_asyncio_processpool_spawn_importable_worker_runs
+    """
+    if "spawn" not in MP_START_METHODS:
+        pytest.skip("spawn start method is unavailable on this platform.")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "test_asyncio_processpool_spawn_importable_worker.ipynb"
     shutil.copy2(src, pytester.path / src.name)
     args = ("--notebook-exec-mode=async", "-s", src.name)
     if PYTEST_XDIST_AVAILABLE:
