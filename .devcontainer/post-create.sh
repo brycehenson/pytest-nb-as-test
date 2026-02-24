@@ -16,6 +16,7 @@ uv sync --frozen --group dev --no-managed-python
 
 # Setup some git settings to make it work out of the box
 git config --global --add safe.directory ${WorkspaceFolder}
+git config --global push.autoSetupRemote true
 
 # Merge by default
 git config pull.rebase false

@@ -7,3 +7,4 @@ plotly
 pydantic
 pytest
 pypi
+pyproject.toml
