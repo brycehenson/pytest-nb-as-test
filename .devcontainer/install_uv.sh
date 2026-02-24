@@ -5,7 +5,7 @@ UV_VERSION="0.10.2"
 
 if ! command -v pipx &> /dev/null; then
     echo "pipx not found, installing uv with pip..."
-    python3 -m pip install --no-cache-dir "uv==${UV_VERSION}"
+    python3 -m pip install --no-cache-dir --break-system-packages "uv==${UV_VERSION}"
 else
     pipx ensurepath
     pipx install --global "uv==${UV_VERSION}"

@@ -14,7 +14,7 @@
   "customizations": {
     "vscode": {
       "settings": {
-        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.defaultInterpreterPath": "/usr/bin/python3",
         "python.globalModuleInstallation": true
       },
       "extensions": [

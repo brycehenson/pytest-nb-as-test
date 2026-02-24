@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project follows Semantic Versioning.
 
 ## Unreleased
+- devcontainer:
+  - switch to `mcr.microsoft.com/devcontainers/base:debian` and install system
+    Python/tooling explicitly to avoid conflicts from preinstalled `pipx` tools
+  - remove ad-hoc git tool installs from the Dockerfile and rely on project
+    dependency management
+- development tooling:
+  - add `pre-commit`, `nbstripout-fast`, and `nbdime` to the `dev` dependency
+    group in `pyproject.toml`
+  - configure `pre-commit` to run `nbstripout-fast` on notebooks before formatters
+    (`black`, `isort`)
+  - simplify post-create setup by removing the extra `.gitconfig` include for
+    notebook output stripping and keeping hook installation via `pre-commit install`
 
 ## 0.1.8
 - fix notebook-local multiprocessing targets in sync execution by avoiding

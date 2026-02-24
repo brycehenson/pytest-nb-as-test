@@ -19,8 +19,6 @@ git config --global --add safe.directory ${WorkspaceFolder}
 
 # Merge by default
 git config pull.rebase false
-# Install stripping of outputs for ipynb
-git config --local include.path "../.devcontainer/clear_ipynb_output.gitconfig" || true
 
 # setup the git pre-commit hooks
 pre-commit install
