@@ -47,7 +47,7 @@ jobs:
             pytest-spec: "pytest<9.1.0"
 
           - python-version: "3.14"
-            pytest-spec: "pytest<7.3.2"
+            pytest-spec: "pytest==7.3.2"
           - python-version: "3.14"
             pytest-spec: "pytest<9.1.0"
 
