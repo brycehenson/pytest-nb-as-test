@@ -7,12 +7,22 @@ and this project follows Semantic Versioning.
 
 ## Unreleased
 - improve notebook execution parity with Jupyter by executing generated notebook code at module scope
+- execute notebooks with `__name__ == "__main__"` semantics so guarded `main()` blocks run
+- preserve multiprocessing compatibility while using `__main__` semantics by aliasing the notebook runtime module during execution
 - add clear guardrails for `spawn`/`forkserver` multiprocessing with notebook-defined callables
+- harden `spawn`/`forkserver` guardrails by validating callables at class-level multiprocessing entrypoints
+  (`multiprocessing.process.BaseProcess.start`, `multiprocessing.pool.Pool.*`,
+  and `concurrent.futures.process.ProcessPoolExecutor.submit/map`) to prevent
+  import-path bypasses and produce deterministic guardrail errors
 - improve directive parsing by rejecting directives indented by more than 4 spaces
 - improve directive parsing by allowing trailing inline comments in directive values
 - document IPython runtime compatibility limits (magics/shell escapes, `get_ipython`, IPython globals)
 - emit pytest warnings when magics/shell escapes are commented out or IPython runtime globals are referenced
 - add notebook regression tests for multiprocessing + async cases, guardrail failures, and directive parsing edge cases
+- add regression coverage for `if __name__ == "__main__":` notebook execution (`tests/notebooks/test_main.ipynb`)
+- add guardrail regression coverage for `multiprocessing.Process`, `get_context("spawn").Process`,
+  `from multiprocessing.pool import Pool`, and
+  `from concurrent.futures.process import ProcessPoolExecutor`
 - expand CI coverage across Python 3.10 to 3.14 and min/latest supported pytest versions
 - add a Windows CI test job (Python 3.14, latest supported pytest)
 - add a CI smoke test without `pytest-xdist`

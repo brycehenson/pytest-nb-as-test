@@ -15,6 +15,7 @@ import multiprocessing.process as multiprocessing_process
 import os
 import re
 import sys
+import tempfile
 import traceback
 import types
 from contextlib import contextmanager
@@ -59,6 +60,54 @@ _SPAWN_GUARDRAIL_MESSAGE = (
     "put worker targets in an importable .py module"
 )
 _IPYTHON_GLOBAL_NAMES = frozenset({"In", "Out", "_ih", "_oh", "_dh"})
+
+
+def _ensure_spawn_bootstrap_script() -> str:
+    """Create a no-op script used as a safe spawn bootstrap target.
+
+    Returns:
+        Absolute path to a Python script that executes without side effects.
+
+    Example:
+        bootstrap_path = _ensure_spawn_bootstrap_script()
+    """
+    bootstrap_dir = Path(tempfile.gettempdir()) / "pytest-nb-as-test"
+    bootstrap_dir.mkdir(parents=True, exist_ok=True)
+    bootstrap_path = bootstrap_dir / "spawn_bootstrap.py"
+    if not bootstrap_path.exists():
+        bootstrap_path.write_text(
+            '"""No-op bootstrap script for multiprocessing spawn."""\n\n'
+            'if __name__ == "__main__":\n'
+            "    pass\n",
+            encoding="utf-8",
+        )
+    return str(bootstrap_path)
+
+
+def _resolve_safe_main_file_for_spawn() -> str:
+    """Return a script path safe for spawn/forkserver bootstrap.
+
+    Multiprocessing ``spawn`` and ``forkserver`` bootstrap child processes by
+    executing ``__main__.__file__``. During notebook execution, ``__main__``
+    points at the synthetic notebook module, so exposing the ``.ipynb`` path
+    there causes children to run notebook JSON as Python.
+
+    Returns:
+        Path to a script that child processes can safely execute.
+
+    Example:
+        safe_file = _resolve_safe_main_file_for_spawn()
+    """
+    current_main = sys.modules.get(_MAIN_MODULE_NAME)
+    for candidate in (getattr(current_main, "__file__", None), sys.argv[0]):
+        if not isinstance(candidate, str) or not candidate:
+            continue
+        candidate_path = os.path.abspath(candidate)
+        if os.path.isfile(candidate_path) and not candidate_path.lower().endswith(
+            ".ipynb"
+        ):
+            return candidate_path
+    return _ensure_spawn_bootstrap_script()
 
 
 def _find_ipython_runtime_references(source: str) -> set[str]:
@@ -1124,13 +1173,14 @@ class NotebookItem(pytest.Function):
             timeout_config=self._timeout_config,
             has_timeouts=self._has_timeouts,
         )
+        safe_main_file = _resolve_safe_main_file_for_spawn()
         sync_module = types.ModuleType(_SYNC_EXEC_MODULE_NAME)
-        sync_module.__file__ = str(self.path)
+        sync_module.__file__ = safe_main_file
         sync_module.__package__ = "pytest_nb_as_test"
         sys.modules[_SYNC_EXEC_MODULE_NAME] = sync_module
         namespace = cast(Dict[str, Any], sync_module.__dict__)
         namespace["__name__"] = _MAIN_MODULE_NAME
-        namespace["__file__"] = str(self.path)
+        namespace["__file__"] = safe_main_file
         namespace["__notebook_timeout__"] = timeout_controller.cell_timeout_context
 
         executable_module_ast = ast.Module(

@@ -20,6 +20,7 @@ jobs:
   pytest:
     name: Tests (Python ${{ matrix.python-version }}, pytest ${{ matrix.pytest-label }})
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     continue-on-error: ${{ matrix.experimental || false }}
     strategy:
       fail-fast: false
@@ -78,6 +79,7 @@ jobs:
   pytest-windows:
     name: Tests (Windows, Python 3.12)
     runs-on: windows-latest
+    timeout-minutes: 2
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -103,6 +105,7 @@ jobs:
   pytest-coverage:
     name: Coverage (Python 3.12, latest pytest)
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -119,12 +122,50 @@ jobs:
         run: uv sync --frozen  --group dev
 
       - name: Run pytest with coverage
-        run: uv run pytest --cov --cov-report=lcov:lcov.info --cov-report=term
+        run: >
+          uv run pytest
+          --cov=pytest_nb_as_test
+          --cov-report=term-missing
+          --cov-report=xml:coverage.xml
+          --cov-report=lcov:lcov.info
+
+      - name: Add coverage summary
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import xml.etree.ElementTree as et
+
+          summary_path = pathlib.Path(".coverage-summary.md")
+          xml_path = pathlib.Path("coverage.xml")
+          if not xml_path.exists():
+              summary_path.write_text("Coverage XML was not generated.\n")
+          else:
+              root = et.parse(xml_path).getroot()
+              line_rate = float(root.attrib.get("line-rate", 0.0))
+              summary_path.write_text(
+                  "## Coverage Report\n\n"
+                  f"- Line coverage: {line_rate * 100:.2f}%\n"
+                  "- Reports: `coverage.xml`, `lcov.info`\n"
+              )
+          PY
+          cat .coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          if-no-files-found: ignore
+          path: |
+            coverage.xml
+            lcov.info
 
   # Ensure the package still works when pytest-xdist is not installed.
   pytest-no-xdist:
     name: Tests (no xdist smoke)
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -152,6 +193,7 @@ jobs:
   pylint:
     name: Lint (pylint)
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -174,6 +216,7 @@ jobs:
   pyright:
     name: Type Check (pyright)
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -196,6 +239,7 @@ jobs:
   format:
     name: Formatting Checks
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -228,6 +272,7 @@ jobs:
     name: Changelog Check
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
       - name: Checkout
         uses: actions/checkout@v4
