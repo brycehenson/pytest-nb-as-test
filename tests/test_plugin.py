@@ -5,17 +5,30 @@ provided by pytest.  Each test copies a sample notebook into the temporary
 pytest environment, invokes pytest with appropriate options and then
 asserts on the outcome or output.  The notebooks reside in the
 `tests/notebooks` directory of this package.
+
+if you want to run a different python version
+```
+uv sync --frozen --group dev --python 3.12
+uv run --python 3.12 pytest .
+```
 """
+
+# pylint: disable=too-many-lines
 
 from __future__ import annotations
 
 import importlib.util
+import multiprocessing as mp
 import re
 import shutil
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
+
+import pytest_nb_as_test.plugin as plugin_module
 
 
 def _pytest_xdist_available() -> bool:
@@ -29,6 +42,121 @@ def _pytest_xdist_available() -> bool:
 
 
 PYTEST_XDIST_AVAILABLE = _pytest_xdist_available()
+MP_START_METHODS = set(mp.get_all_start_methods())
+SPAWN_GUARDRAIL_MESSAGE = (
+    "spawn cannot pickle notebook defined callables, "
+    "put worker targets in an importable .py module"
+)
+
+
+def _has_numprocesses_arg(args: tuple[str, ...]) -> bool:
+    """Return True when explicit xdist process count args are present.
+
+    Args:
+        args: Positional pytest CLI arguments.
+
+    Returns:
+        True when ``-n``/``--numprocesses`` is explicitly provided.
+
+    Example:
+        assert _has_numprocesses_arg(("-n", "2"))
+    """
+    for arg in args:
+        if arg in {"-n", "--numprocesses"}:
+            return True
+        if arg.startswith("-n") and len(arg) > 2:
+            return True
+        if arg.startswith("--numprocesses="):
+            return True
+    return False
+
+
+def _runpytest_subprocess(pytester: pytest.Pytester, *args: str) -> Any:
+    """Run ``pytester.runpytest_subprocess`` with nested xdist disabled by default.
+
+    When the outer test session already runs under xdist, invoking ``pytest``
+    again from inside tests can create unstable nested worker trees,
+    particularly on Windows. Defaulting inner invocations to ``-n 0`` keeps
+    subprocess test runs serial unless a test explicitly requests xdist.
+
+    Args:
+        pytester: Pytester fixture instance.
+        *args: Additional CLI arguments for the subprocess pytest run.
+
+    Returns:
+        The subprocess run result from pytest.
+
+    Example:
+        result = _runpytest_subprocess(pytester, "-q")
+    """
+    if PYTEST_XDIST_AVAILABLE and not _has_numprocesses_arg(args):
+        return pytester.runpytest_subprocess("-n", "0", *args)
+    return pytester.runpytest_subprocess(*args)
+
+
+def test_pytest_configure_rejects_incompatible_pytest_asyncio_pair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Raise UsageError for known incompatible pytest/pytest-asyncio versions.
+
+    Args:
+        monkeypatch: Fixture for patching module attributes.
+
+    Example:
+        pytest -k test_pytest_configure_rejects_incompatible_pytest_asyncio_pair
+    """
+
+    monkeypatch.setattr(plugin_module.pytest, "__version__", "9.0.2")
+    monkeypatch.setattr(
+        plugin_module.importlib_metadata,
+        "version",
+        lambda _: "0.23.3",
+    )
+    config = cast(
+        pytest.Config,
+        SimpleNamespace(
+            pluginmanager=SimpleNamespace(hasplugin=lambda name: name == "asyncio"),
+            addinivalue_line=lambda _key, _value: None,
+        ),
+    )
+
+    with pytest.raises(
+        pytest.UsageError,
+        match="Unsupported plugin combination detected",
+    ):
+        plugin_module.pytest_configure(config)
+
+
+def test_pytest_configure_allows_compatible_pytest_asyncio_pair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Allow marker registration when plugin versions are compatible.
+
+    Args:
+        monkeypatch: Fixture for patching module attributes.
+
+    Example:
+        pytest -k test_pytest_configure_allows_compatible_pytest_asyncio_pair
+    """
+
+    monkeypatch.setattr(plugin_module.pytest, "__version__", "9.0.2")
+    monkeypatch.setattr(
+        plugin_module.importlib_metadata,
+        "version",
+        lambda _: "1.3.0",
+    )
+    added_lines: list[tuple[str, str]] = []
+    config = cast(
+        pytest.Config,
+        SimpleNamespace(
+            pluginmanager=SimpleNamespace(hasplugin=lambda name: name == "asyncio"),
+            addinivalue_line=lambda key, value: added_lines.append((key, value)),
+        ),
+    )
+    plugin_module.pytest_configure(config)
+    assert added_lines == [
+        ("markers", "notebook: mark test as generated from a Jupyter notebook")
+    ]
 
 
 def assert_output_line(output: str, expected_line: str) -> None:
@@ -84,7 +212,26 @@ def assert_pytest_timeout_line(
                 f"expected {expected_seconds}s ± {tolerance_fraction:.0%}, "
                 f"got {seconds}s."
             )
-    raise AssertionError("Expected pytest-timeout failure line not found.")
+    # Some platforms/configurations hard-abort with a timeout banner and stack
+    # dump before pytest prints a normal failure line or terminal summary.
+    if "Stack of MainThread" in output and " Timeout " in output:
+        return
+    raise AssertionError("Expected pytest-timeout output not found.")
+
+
+def assert_spawn_guardrail_message(output: str) -> None:
+    """Assert that the spawn/forkserver guardrail message appears in output.
+
+    Args:
+        output: Combined stdout/stderr to inspect.
+
+    Example:
+        assert_spawn_guardrail_message("...spawn cannot pickle...")
+    """
+    if SPAWN_GUARDRAIL_MESSAGE not in output:
+        raise AssertionError(
+            "Expected spawn/forkserver guardrail message was not found in output."
+        )
 
 
 def test_run_simple_notebook(pytester: pytest.Pytester) -> None:
@@ -97,7 +244,7 @@ def test_run_simple_notebook(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "example_simple_123.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(passed=1)
 
 
@@ -120,7 +267,7 @@ def test_conftest_autouse_fixture_applies_to_notebooks(
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "example_simple_123.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(errors=1)
 
 
@@ -151,7 +298,7 @@ def test_conftest_notebook_marker_behavior(pytester: pytest.Pytester) -> None:
     )
     src = fixture_case_dir / "test_conftest_marker.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(passed=2)
 
 
@@ -176,7 +323,7 @@ def test_marker_expression_skips_notebooks(pytester: pytest.Pytester) -> None:
             """
         ).lstrip()
     )
-    result = pytester.runpytest_subprocess("-m", "not notebook")
+    result = _runpytest_subprocess(pytester, "-m", "not notebook")
     result.assert_outcomes(passed=1, deselected=1)
 
 
@@ -200,12 +347,12 @@ def test_conftest_notebook_detection_sets_matplotlib_backend(
         fixture_case_dir / "test_regular_backend.py",
         pytester.path / "test_regular_backend.py",
     )
-    result = pytester.runpytest_subprocess("test_regular_backend.py")
+    result = _runpytest_subprocess(pytester, "test_regular_backend.py")
     result.assert_outcomes(passed=1)
 
     src = fixture_case_dir / "test_matplotlib_backend.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess(src.name)
+    result = _runpytest_subprocess(pytester, src.name)
     result.assert_outcomes(passed=1)
 
 
@@ -223,7 +370,7 @@ def test_notebook_glob_filters(pytester: pytest.Pytester) -> None:
     shutil.copy2(src, pytester.path / src.name)
     src = notebooks_dir / "test_async_exec_mode.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess("--notebook-glob=example_simple_*.ipynb")
+    result = _runpytest_subprocess(pytester, "--notebook-glob=example_simple_*.ipynb")
     result.assert_outcomes(passed=1)
 
 
@@ -242,7 +389,7 @@ def test_xdist_worksteal_hookwrapper(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "example_simple_123.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess("-n", "2", "--dist", "worksteal")
+    result = _runpytest_subprocess(pytester, "-n", "2", "--dist", "worksteal")
     result.assert_outcomes(passed=1)
 
 
@@ -256,8 +403,55 @@ def test_default_all_directive(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_default_all_false.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(passed=1)
+
+
+def test_over_indented_directive_errors(pytester: pytest.Pytester) -> None:
+    """Raise a clear error for directives indented by more than 4 spaces.
+
+    A directive line with 5 leading spaces should not be ignored silently;
+    collection should fail with a ``UsageError`` that explains the limit.
+    """
+    notebook_path = pytester.path / "test_over_indented_directive.ipynb"
+    notebook_path.write_text(
+        textwrap.dedent(
+            """
+            {
+              "cells": [
+                {
+                  "cell_type": "code",
+                  "execution_count": null,
+                  "id": "over-indented-directive",
+                  "metadata": {},
+                  "outputs": [],
+                  "source": [
+                    "     # pytest-nb-as-test: default-all=False\\n",
+                    "print(\\"hello\\")\\n"
+                  ]
+                }
+              ],
+              "metadata": {
+                "kernelspec": {
+                  "display_name": "Python 3",
+                  "language": "python",
+                  "name": "python3"
+                },
+                "language_info": {
+                  "name": "python"
+                }
+              },
+              "nbformat": 4,
+              "nbformat_minor": 5
+            }
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+    result = _runpytest_subprocess(pytester, notebook_path.name)
+    result.assert_outcomes(errors=1)
+    output = result.stdout.str() + result.stderr.str()
+    assert "Directive lines may be indented by at most 4 leading spaces" in output
 
 
 def test_test_cell_override(pytester: pytest.Pytester) -> None:
@@ -270,7 +464,29 @@ def test_test_cell_override(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_test_cell_override.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
+    result.assert_outcomes(passed=1)
+
+
+def test_test_cell_directive_with_trailing_comment(
+    pytester: pytest.Pytester,
+) -> None:
+    """Allow trailing comments after boolean directives.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_test_cell_directive_with_trailing_comment
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "test_trailing_test_cell_comment.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    result = _runpytest_subprocess(
+        pytester,
+        "--notebook-default-all=false",
+        src.name,
+    )
     result.assert_outcomes(passed=1)
 
 
@@ -285,7 +501,7 @@ def test_must_raise_exception(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_must_raise.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(passed=1)
 
 
@@ -305,8 +521,10 @@ def test_strip_line_magics(pytester: pytest.Pytester) -> None:
     # specify a directory for generated scripts
     gen_dir = pytester.path / "generated"
     gen_dir.mkdir()
-    result = pytester.runpytest_subprocess(f"--notebook-keep-generated={gen_dir}")
+    result = _runpytest_subprocess(pytester, f"--notebook-keep-generated={gen_dir}")
     result.assert_outcomes(passed=1)
+    output = result.stdout.str() + result.stderr.str()
+    assert "commented out IPython magics/shell escapes" in output
     # one file should be generated
     gen_files = list(gen_dir.glob("*.py"))
     assert gen_files, "No generated script produced"
@@ -333,13 +551,108 @@ def test_strip_indented_magics(pytester: pytest.Pytester) -> None:
     shutil.copy2(src, pytester.path / src.name)
     gen_dir = pytester.path / "generated"
     gen_dir.mkdir()
-    result = pytester.runpytest_subprocess(f"--notebook-keep-generated={gen_dir}")
+    result = _runpytest_subprocess(pytester, f"--notebook-keep-generated={gen_dir}")
     result.assert_outcomes(passed=1)
     gen_files = list(gen_dir.glob("*.py"))
     assert gen_files, "No generated script produced"
     content = gen_files[0].read_text()
     assert "#%time" in content
     assert '#!echo "hello from shell"' in content
+
+
+def test_warn_on_get_ipython_and_ipython_globals(pytester: pytest.Pytester) -> None:
+    """Warn when a notebook references unsupported IPython runtime globals.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_warn_on_get_ipython_and_ipython_globals
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "test_get_ipython_globals.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    result = _runpytest_subprocess(pytester)
+    result.assert_outcomes(passed=1)
+    output = result.stdout.str() + result.stderr.str()
+    assert "references IPython runtime symbol(s)" in output
+    assert "get_ipython()" in output
+    assert "In" in output
+
+
+def test_warn_on_get_ipython_call(pytester: pytest.Pytester) -> None:
+    """Warn when notebook code calls ``get_ipython()``.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_warn_on_get_ipython_call
+    """
+    notebook_path = pytester.path / "test_get_ipython_only.ipynb"
+    notebook_path.write_text(
+        textwrap.dedent(
+            """
+            {
+              "cells": [
+                {
+                  "cell_type": "code",
+                  "execution_count": null,
+                  "id": "get-ipython-only",
+                  "metadata": {},
+                  "outputs": [],
+                  "source": [
+                    "try:\\n",
+                    "    get_ipython().run_line_magic(\\"time\\", \\"x = sum(range(10))\\")\\n",
+                    "except NameError:\\n",
+                    "    pass\\n",
+                    "print(\\"ok\\")\\n"
+                  ]
+                }
+              ],
+              "metadata": {
+                "kernelspec": {
+                  "display_name": "Python 3",
+                  "language": "python",
+                  "name": "python3"
+                },
+                "language_info": {
+                  "name": "python"
+                }
+              },
+              "nbformat": 4,
+              "nbformat_minor": 5
+            }
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+    result = _runpytest_subprocess(pytester)
+    result.assert_outcomes(passed=1)
+    output = result.stdout.str() + result.stderr.str()
+    assert "references IPython runtime symbol(s)" in output
+    assert "get_ipython()" in output
+
+
+def test_warn_on_non_leading_future_import(pytester: pytest.Pytester) -> None:
+    """Warn when future imports appear outside the first selected code cell.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_warn_on_non_leading_future_import
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "test_future_non_leading_warning.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    result = _runpytest_subprocess(pytester)
+    result.assert_outcomes(passed=1)
+    output = result.stdout.str() + result.stderr.str()
+    assert (
+        "found 'from __future__ import ...' in non-leading selected cell(s)" in output
+    )
+    assert "differs from Jupyter's per-cell execution semantics" in output
 
 
 def test_cli_default_all_false(pytester: pytest.Pytester) -> None:
@@ -352,7 +665,7 @@ def test_cli_default_all_false(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "example_simple_123.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess("--notebook-default-all=false")
+    result = _runpytest_subprocess(pytester, "--notebook-default-all=false")
     result.assert_outcomes(skipped=1)
 
 
@@ -376,10 +689,10 @@ def test_cli_overrides_ini_default_all(pytester: pytest.Pytester) -> None:
             """
         ).lstrip()
     )
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(skipped=1)
 
-    result = pytester.runpytest_subprocess("--notebook-default-all=true")
+    result = _runpytest_subprocess(pytester, "--notebook-default-all=true")
     result.assert_outcomes(passed=1)
 
 
@@ -395,7 +708,7 @@ def test_async_exec_mode(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_async_exec_mode.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(passed=1)
 
 
@@ -421,7 +734,8 @@ def test_auto_exec_mode(pytester: pytest.Pytester) -> None:
     gen_dir.mkdir()
 
     # Test sync notebook with auto mode (should generate sync wrapper)
-    result = pytester.runpytest_subprocess(
+    result = _runpytest_subprocess(
+        pytester,
         "--notebook-exec-mode=auto",
         "--notebook-glob=example_simple_123.ipynb",
         f"--notebook-keep-generated={gen_dir}",
@@ -434,7 +748,8 @@ def test_auto_exec_mode(pytester: pytest.Pytester) -> None:
     assert "async def run_notebook():" not in sync_content
 
     # Test async notebook with auto mode (should generate async wrapper)
-    result = pytester.runpytest_subprocess(
+    result = _runpytest_subprocess(
+        pytester,
         "--notebook-exec-mode=auto",
         "--notebook-glob=test_async_exec_mode.ipynb",
         f"--notebook-keep-generated={gen_dir}",
@@ -444,6 +759,35 @@ def test_auto_exec_mode(pytester: pytest.Pytester) -> None:
     assert gen_files, "No generated script for async notebook produced"
     async_content = gen_files[0].read_text()
     assert "async def run_notebook():" in async_content
+
+
+def test_auto_exec_mode_detects_async_for_and_with(
+    pytester: pytest.Pytester,
+) -> None:
+    """Detect async wrappers for notebooks without explicit ``await``.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_auto_exec_mode_detects_async_for_and_with
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "hard_async_detection.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    gen_dir = pytester.path / "generated"
+    gen_dir.mkdir()
+
+    result = _runpytest_subprocess(
+        pytester,
+        "--notebook-exec-mode=auto",
+        f"--notebook-keep-generated={gen_dir}",
+    )
+    result.assert_outcomes(passed=1)
+    gen_files = list(gen_dir.glob("*hard_async_detection*.py"))
+    assert gen_files, "No generated script for hard async notebook produced"
+    content = gen_files[0].read_text()
+    assert "async def run_notebook():" in content
 
 
 def test_sync_exec_mode(pytester: pytest.Pytester) -> None:
@@ -460,7 +804,8 @@ def test_sync_exec_mode(pytester: pytest.Pytester) -> None:
     shutil.copy2(src, pytester.path / src.name)
     gen_dir = pytester.path / "generated"
     gen_dir.mkdir()
-    result = pytester.runpytest_subprocess(
+    result = _runpytest_subprocess(
+        pytester,
         "--notebook-exec-mode=sync",
         f"--notebook-keep-generated={gen_dir}",
     )
@@ -484,7 +829,7 @@ def test_skip_all_directive(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_skip_all.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(skipped=1)
 
 
@@ -500,7 +845,7 @@ def test_keep_generated_none(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "error_cases" / "test_failure.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess("--notebook-keep-generated=none")
+    result = _runpytest_subprocess(pytester, "--notebook-keep-generated=none")
     result.assert_outcomes(failed=1)
     assert "generated notebook script" not in result.stdout.str()
 
@@ -517,7 +862,7 @@ def test_simplified_traceback_shows_failing_cell(pytester: pytest.Pytester) -> N
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "error_cases" / "test_failure_multicell.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess("--notebook-keep-generated=none")
+    result = _runpytest_subprocess(pytester, "--notebook-keep-generated=none")
     result.assert_outcomes(failed=1)
     output = result.stdout.str()
     assert "Notebook cell failed: test_failure_multicell.ipynb cell=1" in output
@@ -540,7 +885,7 @@ def test_error_line_single_cell(pytester: pytest.Pytester) -> None:
     args = ("-s", "test_failure.ipynb")
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     result.assert_outcomes(failed=1)
     assert_output_line(result.stdout.str(), '> 1 | raise RuntimeError("boom")')
 
@@ -560,7 +905,7 @@ def test_error_line_multicell(pytester: pytest.Pytester) -> None:
     args = ("-s", "test_failure_multicell.ipynb")
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     result.assert_outcomes(failed=1)
     output = result.stdout.str()
     assert_output_line(
@@ -588,12 +933,130 @@ def test_error_line_print_and_error(pytester: pytest.Pytester) -> None:
     args = ("-s", "test_print_and_error.ipynb")
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     result.assert_outcomes(failed=1)
     assert_output_line(
         result.stdout.str(),
         '> 3 | raise ValueError("error on this line")',
     )
+
+
+def test_main_guard_notebook_semantics_executes(pytester: pytest.Pytester) -> None:
+    """Execute notebook ``__name__ == "__main__"`` guard blocks.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_main_guard_notebook_semantics_executes
+    """
+    notebook_path = pytester.path / "test_failure_main_guard.ipynb"
+    notebook_path.write_text(
+        textwrap.dedent(
+            """
+            {
+              "cells": [
+                {
+                  "cell_type": "code",
+                  "execution_count": null,
+                  "id": "main-guard-error",
+                  "metadata": {},
+                  "outputs": [],
+                  "source": [
+                    "def main():\\n",
+                    "    globals()['main_guard_marker'] = True\\n",
+                    "\\n",
+                    "if __name__ == \\"__main__\\":\\n",
+                    "    main()\\n",
+                    "\\n",
+                    "assert globals().get('main_guard_marker') is True, (\\n",
+                    "    \\"expected __name__ == '__main__' guard to execute\\"\\n",
+                    ")\\n"
+                  ]
+                }
+              ],
+              "metadata": {
+                "kernelspec": {
+                  "display_name": "Python 3",
+                  "language": "python",
+                  "name": "python3"
+                },
+                "language_info": {
+                  "name": "python"
+                }
+              },
+              "nbformat": 4,
+              "nbformat_minor": 5
+            }
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+    args = ("-s", notebook_path.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = _runpytest_subprocess(pytester, *args)
+    result.assert_outcomes(passed=1)
+
+
+def test_error_case_asyncio_processpool_fork_notebook_worker(
+    pytester: pytest.Pytester,
+) -> None:
+    """Check failure output for fork ProcessPoolExecutor notebook worker case.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_error_case_asyncio_processpool_fork_notebook_worker
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = (
+        notebooks_dir
+        / "error_cases"
+        / "test_failure_asyncio_processpool_fork_notebook_worker.ipynb"
+    )
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = _runpytest_subprocess(pytester, *args)
+    if "fork" not in MP_START_METHODS:
+        result.assert_outcomes(passed=1)
+        output = result.stdout.str()
+        assert "fork start method not available" in output
+        return
+    result.assert_outcomes(failed=1)
+    output = result.stdout.str()
+    assert "RuntimeError unexpected success" in output
+    assert_output_line(output, "> 1 | assert expected_error_seen is True")
+
+
+def test_error_case_asyncio_processpool_spawn_notebook_worker(
+    pytester: pytest.Pytester,
+) -> None:
+    """Run spawn ProcessPoolExecutor notebook error case with expected exception.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_error_case_asyncio_processpool_spawn_notebook_worker
+    """
+    if "spawn" not in MP_START_METHODS:
+        pytest.skip("spawn start method is unavailable on this platform.")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = (
+        notebooks_dir
+        / "error_cases"
+        / "test_failure_asyncio_processpool_spawn_notebook_worker.ipynb"
+    )
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = _runpytest_subprocess(pytester, *args)
+    result.assert_outcomes(passed=1)
 
 
 def test_multiprocessing_local_function_runs(pytester: pytest.Pytester) -> None:
@@ -609,17 +1072,254 @@ def test_multiprocessing_local_function_runs(pytester: pytest.Pytester) -> None:
         pytest -k test_multiprocessing_local_function_runs
     """
     notebooks_dir = Path(__file__).parent / "notebooks"
-    src = (
-        notebooks_dir
-        / "error_cases"
-        / "test_failure_multiprocessing_local_function.ipynb"
-    )
+    src = notebooks_dir / "test_multiprocessing_local_function.ipynb"
     shutil.copy2(src, pytester.path / src.name)
     args = ("-s", src.name)
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
+    if "fork" not in MP_START_METHODS:
+        result.assert_outcomes(skipped=1)
+        return
     result.assert_outcomes(passed=1)
+
+
+def test_mp_fork_top_level_function_async_exec_mode_runs(
+    pytester: pytest.Pytester,
+) -> None:
+    """Match Jupyter behavior for fork with a notebook-defined top-level function.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_mp_fork_top_level_function_async_exec_mode_runs
+    """
+    if "fork" not in MP_START_METHODS:
+        pytest.skip("fork start method is unavailable on this platform.")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "test_mp_fork_top_level_function_async_exec_mode.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("--notebook-exec-mode=async", "-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = _runpytest_subprocess(pytester, *args)
+    result.assert_outcomes(passed=1)
+
+
+def test_asyncio_multiprocessing_pool_spawn_importable_worker_runs(
+    pytester: pytest.Pytester,
+) -> None:
+    """Run asyncio + spawn pool with an importable worker function.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_asyncio_multiprocessing_pool_spawn_importable_worker_runs
+    """
+    if "spawn" not in MP_START_METHODS:
+        pytest.skip("spawn start method is unavailable on this platform.")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = (
+        notebooks_dir
+        / "test_asyncio_multiprocessing_pool_spawn_importable_worker.ipynb"
+    )
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("--notebook-exec-mode=async", "-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = _runpytest_subprocess(pytester, *args)
+    result.assert_outcomes(passed=1)
+
+
+def test_asyncio_processpool_spawn_importable_worker_runs(
+    pytester: pytest.Pytester,
+) -> None:
+    """Run asyncio + ProcessPoolExecutor(spawn) with an importable worker.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_asyncio_processpool_spawn_importable_worker_runs
+    """
+    if "spawn" not in MP_START_METHODS:
+        pytest.skip("spawn start method is unavailable on this platform.")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "test_asyncio_processpool_spawn_importable_worker.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("--notebook-exec-mode=async", "-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = _runpytest_subprocess(pytester, *args)
+    result.assert_outcomes(passed=1)
+
+
+def test_mp_spawn_pool_notebook_callable_reports_guardrail(
+    pytester: pytest.Pytester,
+) -> None:
+    """Fail fast for spawn pools with notebook-defined callables.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_mp_spawn_pool_notebook_callable_reports_guardrail
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "error_cases" / "test_mp_spawn_pool_guardrail.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("--notebook-exec-mode=sync", "-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = _runpytest_subprocess(pytester, *args)
+    result.assert_outcomes(failed=1)
+    assert_spawn_guardrail_message(result.stdout.str() + result.stderr.str())
+
+
+def test_mp_forkserver_pool_notebook_callable_reports_guardrail(
+    pytester: pytest.Pytester,
+) -> None:
+    """Fail fast for forkserver pools with notebook-defined callables.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_mp_forkserver_pool_notebook_callable_reports_guardrail
+    """
+    if "forkserver" not in MP_START_METHODS:
+        pytest.skip("forkserver start method is unavailable on this platform.")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "error_cases" / "test_mp_forkserver_pool_guardrail.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("--notebook-exec-mode=sync", "-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = _runpytest_subprocess(pytester, *args)
+    result.assert_outcomes(failed=1)
+    assert_spawn_guardrail_message(result.stdout.str() + result.stderr.str())
+
+
+def test_process_pool_executor_spawn_notebook_callable_reports_guardrail(
+    pytester: pytest.Pytester,
+) -> None:
+    """Fail fast for ProcessPoolExecutor spawn with notebook callables.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_process_pool_executor_spawn_notebook_callable_reports_guardrail
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "error_cases" / "test_cfe_spawn_guardrail.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("--notebook-exec-mode=sync", "-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = _runpytest_subprocess(pytester, *args)
+    result.assert_outcomes(failed=1)
+    assert_spawn_guardrail_message(result.stdout.str() + result.stderr.str())
+
+
+def test_mp_process_spawn_notebook_callable_reports_guardrail(
+    pytester: pytest.Pytester,
+) -> None:
+    """Fail fast for ``multiprocessing.Process`` spawn with notebook callables.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_mp_process_spawn_notebook_callable_reports_guardrail
+    """
+    if "spawn" not in MP_START_METHODS:
+        pytest.skip("spawn start method is unavailable on this platform.")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "error_cases" / "test_mp_process_spawn_guardrail.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("--notebook-exec-mode=sync", "-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = _runpytest_subprocess(pytester, *args)
+    result.assert_outcomes(failed=1)
+    assert_spawn_guardrail_message(result.stdout.str() + result.stderr.str())
+
+
+def test_ctx_process_spawn_notebook_callable_reports_guardrail(
+    pytester: pytest.Pytester,
+) -> None:
+    """Fail fast for ``get_context('spawn').Process`` notebook callables.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_ctx_process_spawn_notebook_callable_reports_guardrail
+    """
+    if "spawn" not in MP_START_METHODS:
+        pytest.skip("spawn start method is unavailable on this platform.")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "error_cases" / "test_ctx_process_spawn_guardrail.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("--notebook-exec-mode=sync", "-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = _runpytest_subprocess(pytester, *args)
+    result.assert_outcomes(failed=1)
+    assert_spawn_guardrail_message(result.stdout.str() + result.stderr.str())
+
+
+def test_mp_pool_import_path_spawn_notebook_callable_reports_guardrail(
+    pytester: pytest.Pytester,
+) -> None:
+    """Fail fast for ``from multiprocessing.pool import Pool`` spawn usage.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_mp_pool_import_path_spawn_notebook_callable_reports_guardrail
+    """
+    if "spawn" not in MP_START_METHODS:
+        pytest.skip("spawn start method is unavailable on this platform.")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = (
+        notebooks_dir / "error_cases" / "test_mp_pool_import_path_spawn_guardrail.ipynb"
+    )
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("--notebook-exec-mode=sync", "-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = _runpytest_subprocess(pytester, *args)
+    result.assert_outcomes(failed=1)
+    assert_spawn_guardrail_message(result.stdout.str() + result.stderr.str())
+
+
+def test_cfe_import_path_spawn_notebook_callable_reports_guardrail(
+    pytester: pytest.Pytester,
+) -> None:
+    """Fail fast for ``from concurrent.futures.process`` spawn usage.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_cfe_import_path_spawn_notebook_callable_reports_guardrail
+    """
+    if "spawn" not in MP_START_METHODS:
+        pytest.skip("spawn start method is unavailable on this platform.")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "error_cases" / "test_cfe_import_path_spawn_guardrail.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    args = ("--notebook-exec-mode=sync", "-s", src.name)
+    if PYTEST_XDIST_AVAILABLE:
+        args = ("-n", "0", *args)
+    result = _runpytest_subprocess(pytester, *args)
+    result.assert_outcomes(failed=1)
+    assert_spawn_guardrail_message(result.stdout.str() + result.stderr.str())
 
 
 def test_notebook_timeout_directive_first_cell_only(
@@ -640,13 +1340,42 @@ def test_notebook_timeout_directive_first_cell_only(
         / "test_failure_notebook_timeout_not_in_first_cell.ipynb"
     )
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(errors=1)
     output = result.stdout.str() + result.stderr.str()
     assert (
         "Directive 'notebook-timeout-seconds' must appear in the first code cell"
         in output
     )
+
+
+def test_cell_timeout_directive_with_trailing_comment(
+    pytester: pytest.Pytester,
+) -> None:
+    """Allow trailing comments after numeric timeout directives.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_cell_timeout_directive_with_trailing_comment
+    """
+    pytest.importorskip("pytest_timeout")
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "test_trailing_cell_timeout_comment.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    generated_dir = pytester.path / "generated"
+    generated_dir.mkdir()
+    result = _runpytest_subprocess(
+        pytester,
+        src.name,
+        f"--notebook-keep-generated={generated_dir}",
+    )
+    result.assert_outcomes(passed=1)
+    generated_files = list(generated_dir.glob("*trailing_cell_timeout_comment*.py"))
+    assert generated_files, "No generated script produced"
+    generated_code = generated_files[0].read_text()
+    assert "cell_timeout_seconds=2.0" in generated_code
 
 
 def test_failure_notebook_timeout_reports_pytest_timeout(
@@ -667,9 +1396,12 @@ def test_failure_notebook_timeout_reports_pytest_timeout(
     args = ("-s", "test_failure_notebook_timeout.ipynb")
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
-    result.assert_outcomes(failed=1)
+    result = _runpytest_subprocess(pytester, *args)
     output = result.stdout.str() + result.stderr.str()
+    assert result.ret != 0, (
+        "Expected pytest subprocess to fail from timeout, "
+        f"but it exited with code {result.ret}."
+    )
     assert_pytest_timeout_line(
         output,
         expected_seconds=2.0,
@@ -695,9 +1427,12 @@ def test_failure_cell_timeout_reports_pytest_timeout(
     args = ("-s", "test_failure_cell_timeout.ipynb")
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
-    result.assert_outcomes(failed=1)
+    result = _runpytest_subprocess(pytester, *args)
     output = result.stdout.str() + result.stderr.str()
+    assert result.ret != 0, (
+        "Expected pytest subprocess to fail from timeout, "
+        f"but it exited with code {result.ret}."
+    )
     assert_pytest_timeout_line(
         output,
         expected_seconds=0.5,
@@ -718,7 +1453,7 @@ def test_cell_timeout_uses_pytest_timeout(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_cell_timeout.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(passed=1)
 
 
@@ -735,5 +1470,5 @@ def test_notebook_timeout_uses_pytest_timeout(pytester: pytest.Pytester) -> None
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_notebook_timeout.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(passed=1)

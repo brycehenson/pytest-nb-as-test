@@ -51,6 +51,26 @@ Disable notebook collection and execution:
 pytest -p no:pytest_nb_as_test
 ```
 
+## IPython Runtime Compatibility
+
+`pytest-nb-as-test` executes transformed Python code in-process under pytest.
+It does **not** execute notebooks through a live IPython/Jupyter kernel.
+
+Current contract:
+
+- Lines that start with `%`, `%%`, or `!` are commented out before execution.
+- `get_ipython()` and IPython globals (`In`, `Out`, `_ih`, `_oh`, `_dh`) are not provided by the runtime.
+- `from __future__ import ...` lines are hoisted to the top of generated code across selected cells.
+
+When unsupported IPython runtime usage is detected, and when future imports appear outside the first selected code cell,
+the plugin emits a `PytestWarning` during collection so it is visible in pytest output.
+
+Implication: a notebook can pass while skipping notebook-only side effects from magics or shell escapes.
+Also, future import behavior differs from Jupyter: in Jupyter, a future import only affects cells compiled after that cell executes;
+in `pytest-nb-as-test`, hoisted future imports apply globally to selected cells in the generated script.
+When a future import appears outside the first selected code cell, the plugin emits a `PytestWarning` during collection.
+If you need strict kernel-faithful semantics, use a kernel-based plugin such as `pytest-nbmake`.
+
 ## Cell directives
 
 Directives live in comments inside *code* cells.
@@ -212,6 +232,15 @@ Each selected cell is preceded by a marker comment:
 ```
 
 Use this to correlate tracebacks with notebook cell indices.
+Here `<index>` is the notebook JSON cell index (zero-based, includes markdown/raw cells).
+
+## Multiprocessing scope
+
+Goal: multiprocessing behavior should match what works in a normal Jupyter notebook workflow, not exceed it.
+
+In practice, this means prioritising parity for notebook patterns that Jupyter kernels handle successfully (for example
+Linux `fork` with top-level notebook definitions), and not targeting broader support for patterns that are typically not
+reliable in Jupyter (for example `spawn`/`forkserver` importability edge cases, lambdas, nested callables).
 
 ## Versioning / API stability
 
@@ -264,11 +293,15 @@ notebook tests via the `notebook` marker.
 ### NumPy RNG: seed and ensure it is unused
 
 ```python
+from collections.abc import Generator
+
 import pytest
 
 
 @pytest.fixture(autouse=True)
-def seed_and_lock_numpy_rng(request: pytest.FixtureRequest) -> None:
+def seed_and_lock_numpy_rng(
+    request: pytest.FixtureRequest,
+) -> Generator[None, None, None]:
     if request.node.get_closest_marker("notebook") is None:
         yield
         return
@@ -296,11 +329,15 @@ def seed_and_lock_numpy_rng(request: pytest.FixtureRequest) -> None:
 ### Matplotlib backend
 
 ```python
+from collections.abc import Generator
+
 import pytest
 
 
 @pytest.fixture(autouse=True)
-def set_matplotlib_backend(request: pytest.FixtureRequest) -> None:
+def set_matplotlib_backend(
+    request: pytest.FixtureRequest,
+) -> Generator[None, None, None]:
     if request.node.get_closest_marker("notebook") is None:
         yield
         return
@@ -318,11 +355,16 @@ def set_matplotlib_backend(request: pytest.FixtureRequest) -> None:
 ### Plotly renderer
 
 ```python
+import os
+from collections.abc import Generator
+
 import pytest
 
 
 @pytest.fixture(autouse=True)
-def set_plotly_renderer(request: pytest.FixtureRequest) -> None:
+def set_plotly_renderer(
+    request: pytest.FixtureRequest,
+) -> Generator[None, None, None]:
     if request.node.get_closest_marker("notebook") is None:
         yield
         return
@@ -334,8 +376,6 @@ def set_plotly_renderer(request: pytest.FixtureRequest) -> None:
         return
 
     os.environ.setdefault("PLOTLY_RENDERER", "json")
-
-    import plotly.io as pio
 
     pio.renderers.default = "json"
     pio.renderers.render_on_display = False
@@ -385,3 +425,29 @@ This plugin is aimed at *CI enforcement of example notebooks* in scientific code
 
 If you need output regression diffs, prefer `nbval` or `pytest-notebook`.
 If you need faithful kernel execution semantics, prefer `pytest-nbmake`.
+
+## Planned
+
+### Stricter `must-raise-exception` matching (target: v1.1)
+
+`v1.0` supports a boolean `must-raise-exception=True|False`.
+When enabled, any `Exception` satisfies the directive.
+
+Planned enhancement:
+
+- allow matching the expected exception type separately from the message
+- keep current boolean behavior as the default for backward compatibility
+
+Proposed directives:
+
+```python
+# pytest-nb-as-test: must-raise-exception=True
+# pytest-nb-as-test: must-raise-exception-type=ValueError
+# pytest-nb-as-test: must-raise-exception-match=intentional error
+```
+
+Intended behavior:
+
+- `must-raise-exception-type` validates the exception class
+- `must-raise-exception-match` validates the error message (regex-style match)
+- both are optional refinements when `must-raise-exception=True`

@@ -180,8 +180,19 @@ def _pytest_timeout_context(
     """
     hooks = item.config.pluginmanager.hook
     updated_settings = settings._replace(timeout=timeout_seconds)
+    missing_cancel_sentinel = object()
+    previous_cancel = getattr(item, "cancel_timeout", missing_cancel_sentinel)
     hooks.pytest_timeout_set_timer(item=item, settings=updated_settings)
+    inner_cancel = getattr(item, "cancel_timeout", None)
+    if previous_cancel is missing_cancel_sentinel:
+        if hasattr(item, "cancel_timeout"):
+            delattr(item, "cancel_timeout")
+    else:
+        # pytest.Item does not declare this dynamic attribute, but pytest-timeout
+        # installs and expects it.
+        setattr(item, "cancel_timeout", previous_cancel)
     try:
         yield
     finally:
-        hooks.pytest_timeout_cancel_timer(item=item)
+        if callable(inner_cancel):
+            inner_cancel()

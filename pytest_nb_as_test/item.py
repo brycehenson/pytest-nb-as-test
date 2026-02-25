@@ -1,26 +1,42 @@
 """Notebook collection and execution for the pytest plugin."""
 
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
 import ast
 import asyncio
 import fnmatch
-import hashlib
-import importlib
 import inspect
 import os
 import re
 import sys
-import tempfile
 import traceback
 import types
-import uuid
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, ClassVar, Coroutine, Dict, Iterable, cast
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Coroutine,
+    Dict,
+    Iterable,
+    Iterator,
+    cast,
+)
 
 import nbformat  # type: ignore
 import pytest  # type: ignore
 
+from .multiprocessing_guard import (
+    _MAIN_MODULE_NAME,
+    _SPAWN_GUARDRAIL_MESSAGE,
+    _SPAWN_START_METHODS,
+    _SYNC_EXEC_MODULE_NAME,
+    _resolve_safe_main_file_for_spawn,
+    _spawn_guard_context,
+)
 from .notebook_code import (
     CellCodeSpan,
     SelectedCell,
@@ -38,6 +54,206 @@ from .timeout import (
     NotebookTimeoutController,
     _has_pytest_timeout_hooks,
 )
+
+_IPYTHON_GLOBAL_NAMES = frozenset({"In", "Out", "_ih", "_oh", "_dh"})
+
+
+def _find_ipython_runtime_references(source: str) -> set[str]:
+    """Detect references to IPython runtime objects not provided by this plugin.
+
+    Args:
+        source: Python source code for a single notebook cell.
+
+    Returns:
+        A set of referenced names. The pseudo-name ``get_ipython()`` is used for
+        calls to ``get_ipython``.
+
+    Example:
+        refs = _find_ipython_runtime_references(
+            "get_ipython().run_line_magic('time', 'x = 1')\\n"
+        )
+    """
+    try:
+        module_ast = ast.parse(source)
+    except SyntaxError:
+        return set()
+
+    references: set[str] = set()
+
+    class _IPythonReferenceVisitor(ast.NodeVisitor):  # pylint: disable=invalid-name
+        """Collect unsupported IPython runtime references.
+
+        Example:
+            visitor = _IPythonReferenceVisitor()
+        """
+
+        def visit_Call(  # pylint: disable=invalid-name
+            self,
+            node: ast.Call,
+        ) -> None:
+            """Record ``get_ipython()`` calls.
+
+            Args:
+                node: AST call node to inspect.
+
+            Example:
+                visitor.visit_Call(ast.parse("get_ipython()").body[0].value)
+            """
+            if isinstance(node.func, ast.Name) and node.func.id == "get_ipython":
+                references.add("get_ipython()")
+            self.generic_visit(node)
+
+        def visit_Name(  # pylint: disable=invalid-name
+            self,
+            node: ast.Name,
+        ) -> None:
+            """Record reads of known IPython globals.
+
+            Args:
+                node: AST name node to inspect.
+
+            Example:
+                visitor.visit_Name(ast.parse("In").body[0].value)
+            """
+            if isinstance(node.ctx, ast.Load) and node.id in _IPYTHON_GLOBAL_NAMES:
+                references.add(node.id)
+            self.generic_visit(node)
+
+    _IPythonReferenceVisitor().visit(module_ast)
+    return references
+
+
+def _cell_requires_async_wrapper(source: str) -> bool:
+    """Detect whether a cell needs a top-level async execution wrapper.
+
+    Args:
+        source: Python source code for a single notebook cell.
+
+    Returns:
+        True when module-level async constructs are present.
+
+    Example:
+        needs_async = _cell_requires_async_wrapper("async with ctx:\\n    pass\\n")
+    """
+    try:
+        module_ast = ast.parse(source)
+    except SyntaxError:
+        # Let downstream compilation report syntax errors verbatim.
+        return False
+
+    class _TopLevelAsyncVisitor(  # pylint: disable=too-few-public-methods,invalid-name
+        ast.NodeVisitor
+    ):
+        """Find async-only constructs outside async function bodies.
+
+        Example:
+            visitor = _TopLevelAsyncVisitor()
+        """
+
+        def __init__(self) -> None:
+            self.requires_async = False
+            self._async_function_depth = 0
+
+        def _record_if_top_level(self) -> None:
+            """Mark async requirement when not inside an async function.
+
+            Example:
+                self._record_if_top_level()
+            """
+            if self._async_function_depth == 0:
+                self.requires_async = True
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            """Track nesting depth for async functions.
+
+            Args:
+                node: Async function definition to traverse.
+
+            Example:
+                self.visit_AsyncFunctionDef(node)
+            """
+            self._async_function_depth += 1
+            self.generic_visit(node)
+            self._async_function_depth -= 1
+
+        def visit_Await(self, node: ast.Await) -> None:
+            """Record top-level ``await`` usage.
+
+            Args:
+                node: Await expression node.
+
+            Example:
+                self.visit_Await(node)
+            """
+            self._record_if_top_level()
+            self.generic_visit(node)
+
+        def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
+            """Record top-level ``async for`` usage.
+
+            Args:
+                node: Async for-loop node.
+
+            Example:
+                self.visit_AsyncFor(node)
+            """
+            self._record_if_top_level()
+            self.generic_visit(node)
+
+        def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
+            """Record top-level ``async with`` usage.
+
+            Args:
+                node: Async with-statement node.
+
+            Example:
+                self.visit_AsyncWith(node)
+            """
+            self._record_if_top_level()
+            self.generic_visit(node)
+
+        def visit_comprehension(self, node: ast.comprehension) -> None:
+            """Record top-level async comprehensions.
+
+            Args:
+                node: Comprehension node.
+
+            Example:
+                self.visit_comprehension(node)
+            """
+            if node.is_async:
+                self._record_if_top_level()
+            self.generic_visit(node)
+
+    visitor = _TopLevelAsyncVisitor()
+    visitor.visit(module_ast)
+    return visitor.requires_async
+
+
+@contextmanager
+def _main_module_context(notebook_module: types.ModuleType) -> Iterator[None]:
+    """Temporarily expose notebook execution module as ``__main__``.
+
+    Args:
+        notebook_module: Runtime module for the executing notebook.
+
+    Yields:
+        None.
+
+    Example:
+        with _main_module_context(module):
+            exec(code_obj, module.__dict__)
+    """
+    had_main_module = _MAIN_MODULE_NAME in sys.modules
+    previous_main_module = sys.modules.get(_MAIN_MODULE_NAME)
+    sys.modules[_MAIN_MODULE_NAME] = notebook_module
+    try:
+        yield
+    finally:
+        if had_main_module and previous_main_module is not None:
+            sys.modules[_MAIN_MODULE_NAME] = previous_main_module
+        else:
+            sys.modules.pop(_MAIN_MODULE_NAME, None)
 
 
 def pytest_collect_file(  # type: ignore[override]
@@ -144,6 +360,14 @@ class NotebookFile(pytest.File):
             source = cell.get("source", "")
             # parse directives
             directives: Dict[str, Any] = {}
+            over_indented_directive_pattern = (
+                r"^\s{5,}#\s{0,4}pytest-nb-as-test\s{0,4}:"
+            )
+            if re.search(over_indented_directive_pattern, source, flags=re.MULTILINE):
+                raise pytest.UsageError(
+                    "Directive lines may be indented by at most 4 leading spaces "
+                    f"in cell {idx} of {self.path}"
+                )
             directive_pattern = (
                 r"^\s{0,4}#\s{0,4}pytest-nb-as-test\s{0,4}:\s{0,4}"
                 r"([\w-]+)\s{0,4}=\s{0,4}(.+?)\s*$"
@@ -153,7 +377,8 @@ class NotebookFile(pytest.File):
                 source,
                 flags=re.MULTILINE,
             ):
-                flag, raw_val = match.group(1), match.group(2)
+                flag = match.group(1)
+                raw_val = re.sub(r"\s+#.*$", "", match.group(2)).strip()
                 if flag in directives:
                     raise pytest.UsageError(
                         f"Directive '{flag}' specified multiple times in cell {idx} of {self.path}"
@@ -240,16 +465,74 @@ class NotebookFile(pytest.File):
 
         prepared_cells: list[tuple[SelectedCell, str]] = []
         future_imports: list[str] = []
-        for cell in selected:
+        non_leading_future_import_cell_indexes: list[int] = []
+        magic_rewritten_cell_indexes: list[int] = []
+        ipython_symbol_cell_indexes: dict[str, set[int]] = {}
+        for selected_position, cell in enumerate(selected):
             if disable_magics:
                 transformed = _comment_out_ipython_magics(cell.source)
+                if transformed != cell.source:
+                    magic_rewritten_cell_indexes.append(cell.index)
             else:
                 transformed = cell.source
+            for symbol in _find_ipython_runtime_references(transformed):
+                if symbol not in ipython_symbol_cell_indexes:
+                    ipython_symbol_cell_indexes[symbol] = set()
+                ipython_symbol_cell_indexes[symbol].add(cell.index)
             extracted_future, remaining = _extract_future_imports(transformed)
+            if extracted_future and selected_position > 0:
+                non_leading_future_import_cell_indexes.append(cell.index)
             for future_line in extracted_future:
                 if future_line not in future_imports:
                     future_imports.append(future_line)
             prepared_cells.append((cell, remaining))
+
+        if magic_rewritten_cell_indexes:
+            rewritten_cells = ", ".join(
+                str(index) for index in magic_rewritten_cell_indexes
+            )
+            self.warn(
+                pytest.PytestWarning(
+                    f"Notebook {self.path.name}: commented out IPython magics/shell "
+                    f"escapes in cell(s) {rewritten_cells}. This differs from Jupyter "
+                    "notebook execution and may skip side effects. See pytest-nb-as-test README "
+                    "'IPython Runtime Compatibility'."
+                )
+            )
+
+        if ipython_symbol_cell_indexes:
+            symbol_names = ", ".join(sorted(ipython_symbol_cell_indexes))
+            symbol_cells = sorted(
+                {
+                    index
+                    for indexes in ipython_symbol_cell_indexes.values()
+                    for index in indexes
+                }
+            )
+            referenced_cells = ", ".join(str(index) for index in symbol_cells)
+            self.warn(
+                pytest.PytestWarning(
+                    f"Notebook {self.path.name}: references IPython runtime symbol(s) "
+                    f"{symbol_names} in cell(s) {referenced_cells}. pytest-nb-as-test "
+                    "does not provide a Jupyter/IPython shell context. "
+                    "See pytest-nb-as-test README "
+                    "'IPython Runtime Compatibility'."
+                )
+            )
+
+        if non_leading_future_import_cell_indexes:
+            future_cells = ", ".join(
+                str(index) for index in non_leading_future_import_cell_indexes
+            )
+            self.warn(
+                pytest.PytestWarning(
+                    f"Notebook {self.path.name}: found 'from __future__ import ...' "
+                    f"in non-leading selected cell(s) {future_cells}. "
+                    "pytest-nb-as-test hoists future imports to the top of generated "
+                    "code, which differs from Jupyter's per-cell execution semantics. "
+                    "See pytest-nb-as-test README 'IPython Runtime Compatibility'."
+                )
+            )
 
         # assemble code
         code_lines: list[str] = []
@@ -260,19 +543,20 @@ class NotebookFile(pytest.File):
         # minimal prelude; runtime setup belongs in conftest fixtures
         code_lines.append("import pytest")
         # define wrapper function
-        # determine execution mode: auto (detect await), async (force), or sync (force)
+        # determine execution mode: auto (detect async-only constructs), async
+        # (force), or sync (force)
         exec_mode_lower = str(exec_mode).lower()
-        has_await = False
-        # scan prepared cells for 'await' keyword for 'auto' mode decision
+        requires_async_wrapper = False
+        # scan prepared cells for module-level async-only syntax for auto mode.
         for _, transformed in prepared_cells:
-            if re.search(r"\bawait\b", transformed):
-                has_await = True
+            if _cell_requires_async_wrapper(transformed):
+                requires_async_wrapper = True
                 break
         # determine if async based on mode
         if exec_mode_lower == "async":
             is_async = True
         elif exec_mode_lower == "auto":
-            is_async = has_await
+            is_async = requires_async_wrapper
         else:  # sync mode
             is_async = False
         wrapper_def = "async def run_notebook():" if is_async else "def run_notebook():"
@@ -344,10 +628,6 @@ class NotebookFile(pytest.File):
             timeout_config=timeout_config,
             has_timeouts=has_timeouts,
         )
-        # Mark with @pytest.mark.asyncio only if:
-        # 1. Code is async, AND
-        # 2. pytest-asyncio is installed, AND
-        # 3. pytest-asyncio is NOT in auto mode (auto mode doesn't work well with bound methods)
         item.add_marker("notebook")
         return [item]
 
@@ -356,8 +636,8 @@ class NotebookItem(pytest.Function):
     """A pytest Item representing a single notebook.
 
     Each NotebookItem contains the generated Python code for a notebook and
-    executes it via a callobj that is either synchronous or asynchronous,
-    depending on execution mode and plugin availability.
+    executes it through a single synchronous pytest call path. Async notebook
+    wrappers are executed with ``asyncio.run`` when needed.
 
     Example:
         item = NotebookItem.from_parent(parent, name="example.ipynb::notebook")
@@ -418,40 +698,20 @@ class NotebookItem(pytest.Function):
         """
         return self.path, 1, self.name
 
-    def _load_run_notebook(self) -> Callable[[], Any] | None:
-        """Compile the generated script and return the wrapper function.
-
-        Returns:
-            The ``run_notebook`` callable from the generated code, or None when
-            no callable was defined.
-
-        Example:
-            func = item._load_run_notebook()
-        """
-        namespace: Dict[str, Any] = {
-            "__name__": "__notebook__",
-            "__file__": str(self.path),
-        }
-        timeout_controller = NotebookTimeoutController(
-            item=self,
-            timeout_config=self._timeout_config,
-            has_timeouts=self._has_timeouts,
-        )
-        namespace["__notebook_timeout__"] = timeout_controller.cell_timeout_context
-        code_obj = compile(self._generated_code, filename=str(self.path), mode="exec")
-        exec(code_obj, namespace)  # pylint: disable=exec-used
-        func = namespace.get("run_notebook")
-        if not callable(func):
-            return None
-        return cast(Callable[[], Any], func)
-
-    def _load_sync_module_code(self) -> tuple[Any, Dict[str, Any]]:
-        """Compile sync notebook body for module-scope execution.
+    def _load_module_code(
+        self, *, allow_top_level_await: bool
+    ) -> tuple[Any, Dict[str, Any]]:
+        """Compile notebook body for module-scope execution.
 
         The generated sync script defines ``run_notebook`` and nests all cell
-        code inside it. For compatibility with ``multiprocessing`` pickling in
-        spawn/forkserver modes, top-level notebook function/class definitions
-        are rewritten to import from an importable helper module.
+        code inside it. This method flattens the wrapper body to module scope
+        to match notebook kernel semantics. When ``allow_top_level_await`` is
+        enabled, code is compiled with ``PyCF_ALLOW_TOP_LEVEL_AWAIT`` so async
+        notebooks preserve top-level global definitions.
+
+        Args:
+            allow_top_level_await: Whether to compile with support for top-level
+                ``await``.
 
         Returns:
             Tuple of compiled code object and execution namespace.
@@ -460,156 +720,140 @@ class NotebookItem(pytest.Function):
             ValueError: If ``run_notebook`` is missing from the generated code.
 
         Example:
-            code_obj, namespace = item._load_sync_module_code()
+            code_obj, namespace = item._load_module_code(
+                allow_top_level_await=True,
+            )
         """
         module_ast = ast.parse(
             self._generated_code,
             filename=str(self.path),
             mode="exec",
         )
-        run_notebook_def: ast.FunctionDef | None = None
+        run_notebook_def: ast.FunctionDef | ast.AsyncFunctionDef | None = None
         non_wrapper_nodes: list[ast.stmt] = []
         for node in module_ast.body:
-            if isinstance(node, ast.FunctionDef) and node.name == "run_notebook":
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == "run_notebook"
+            ):
                 run_notebook_def = node
                 continue
             non_wrapper_nodes.append(node)
         if run_notebook_def is None:
             raise ValueError("Generated notebook code does not define run_notebook")
 
-        helper_module_name = self._build_sync_helper_module(
-            non_wrapper_nodes=non_wrapper_nodes,
-            run_notebook_body=run_notebook_def.body,
-        )
-        rewritten_body = self._rewrite_sync_body_with_helper_imports(
-            run_notebook_body=run_notebook_def.body,
-            helper_module_name=helper_module_name,
-        )
-
         timeout_controller = NotebookTimeoutController(
             item=self,
             timeout_config=self._timeout_config,
             has_timeouts=self._has_timeouts,
         )
-        unique_suffix = uuid.uuid4().hex
-        exec_module_name = (
-            f"_pytest_nb_as_test_exec_"
-            f"{self.path.stem}_{os.getpid()}_{unique_suffix}"
-        )
-        sync_module = types.ModuleType(exec_module_name)
-        sync_module.__file__ = str(self.path)
-        sys.modules[exec_module_name] = sync_module
+        safe_main_file = _resolve_safe_main_file_for_spawn()
+        sync_module = types.ModuleType(_SYNC_EXEC_MODULE_NAME)
+        sync_module.__file__ = safe_main_file
+        sync_module.__package__ = "pytest_nb_as_test"
+        sys.modules[_SYNC_EXEC_MODULE_NAME] = sync_module
         namespace = cast(Dict[str, Any], sync_module.__dict__)
-        namespace["__name__"] = exec_module_name
-        namespace["__file__"] = str(self.path)
+        namespace["__name__"] = _MAIN_MODULE_NAME
+        namespace["__file__"] = safe_main_file
         namespace["__notebook_timeout__"] = timeout_controller.cell_timeout_context
 
         executable_module_ast = ast.Module(
-            body=[*non_wrapper_nodes, *rewritten_body],
+            body=[*non_wrapper_nodes, *run_notebook_def.body],
             type_ignores=list(module_ast.type_ignores),
         )
         ast.fix_missing_locations(executable_module_ast)
-        code_obj = compile(executable_module_ast, filename=str(self.path), mode="exec")
+        compile_flags = ast.PyCF_ALLOW_TOP_LEVEL_AWAIT if allow_top_level_await else 0
+        code_obj = compile(
+            executable_module_ast,
+            filename=str(self.path),
+            mode="exec",
+            flags=compile_flags,
+        )
         return code_obj, namespace
 
-    def _build_sync_helper_module(
+    def _validate_spawn_callable(
         self,
-        *,
-        non_wrapper_nodes: list[ast.stmt],
-        run_notebook_body: list[ast.stmt],
-    ) -> str | None:
-        """Create an importable helper module for top-level notebook definitions.
-
-        The helper module is used to host function/class objects so
-        ``multiprocessing`` can resolve them by ``module.name`` during pickling.
+        func: Callable[..., Any],
+        start_method: str,
+    ) -> None:
+        """Validate worker targets submitted to process pools.
 
         Args:
-            non_wrapper_nodes: Statements that appear before ``run_notebook``.
-            run_notebook_body: Statements inside ``run_notebook``.
+            func: Worker callable.
+            start_method: Multiprocessing start method in use.
 
-        Returns:
-            Helper module name when definitions exist, otherwise None.
+        Raises:
+            RuntimeError: If a notebook-defined callable is used with
+                ``spawn`` or ``forkserver``.
 
         Example:
-            module_name = item._build_sync_helper_module(
-                non_wrapper_nodes=[],
-                run_notebook_body=[],
-            )
+            item._validate_spawn_callable(worker, "spawn")
         """
-        definition_nodes: list[ast.stmt] = []
-        import_nodes: list[ast.stmt] = []
-        for node in run_notebook_body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                definition_nodes.append(node)
-            elif isinstance(node, (ast.Import, ast.ImportFrom)):
-                import_nodes.append(node)
-        if not definition_nodes:
-            return None
+        if start_method not in _SPAWN_START_METHODS:
+            return
+        if getattr(func, "__module__", None) not in {
+            _SYNC_EXEC_MODULE_NAME,
+            _MAIN_MODULE_NAME,
+        }:
+            return
+        raise RuntimeError(_SPAWN_GUARDRAIL_MESSAGE)
 
-        future_nodes = [
-            node
-            for node in non_wrapper_nodes
-            if isinstance(node, ast.ImportFrom) and node.module == "__future__"
-        ]
-        helper_module_ast = ast.Module(
-            body=[*future_nodes, *import_nodes, *definition_nodes],
-            type_ignores=[],
-        )
-        ast.fix_missing_locations(helper_module_ast)
-        helper_source = ast.unparse(helper_module_ast) + "\n"
-        module_hash = hashlib.sha256(
-            f"{self.path.resolve()}:{self._generated_code}".encode("utf-8")
-        ).hexdigest()[:12]
-        module_name = f"_pytest_nb_as_test_defs_{self.path.stem}_{module_hash}"
-        helper_root = Path(tempfile.gettempdir()) / "pytest_nb_as_test_defs"
-        helper_root.mkdir(parents=True, exist_ok=True)
-        helper_file = helper_root / f"{module_name}.py"
-        helper_file.write_text(helper_source, encoding="utf-8")
-
-        helper_root_str = str(helper_root)
-        if helper_root_str not in sys.path:
-            sys.path.insert(0, helper_root_str)
-        importlib.invalidate_caches()
-        if module_name in sys.modules:
-            del sys.modules[module_name]
-        importlib.import_module(module_name)
-        return module_name
-
-    def _rewrite_sync_body_with_helper_imports(
-        self,
-        *,
-        run_notebook_body: list[ast.stmt],
-        helper_module_name: str | None,
-    ) -> list[ast.stmt]:
-        """Rewrite sync execution body to import helper definitions.
+    def _contains_spawn_module_error(self, error: BaseException) -> bool:
+        """Return True when an exception chain shows spawn import failures.
 
         Args:
-            run_notebook_body: Statements inside ``run_notebook``.
-            helper_module_name: Optional helper module for definitions.
+            error: Root exception raised while executing the notebook.
 
         Returns:
-            Rewritten statements for module-scope execution.
+            True when the chain contains a module import/pickling failure tied
+            to the notebook execution module.
 
         Example:
-            body = item._rewrite_sync_body_with_helper_imports(
-                run_notebook_body=[],
-                helper_module_name=None,
-            )
+            is_match = item._contains_spawn_module_error(exc)
         """
-        if helper_module_name is None:
-            return run_notebook_body
-        rewritten_body: list[ast.stmt] = []
-        for node in run_notebook_body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                import_node = ast.ImportFrom(
-                    module=helper_module_name,
-                    names=[ast.alias(name=node.name, asname=None)],
-                    level=0,
+        cursor: BaseException | None = error
+        seen: set[int] = set()
+        while cursor is not None and id(cursor) not in seen:
+            seen.add(id(cursor))
+            text = str(cursor)
+            if (_SYNC_EXEC_MODULE_NAME in text or _MAIN_MODULE_NAME in text) and any(
+                token in text
+                for token in (
+                    "No module named",
+                    "ModuleNotFoundError",
+                    "Can't pickle",
+                    "Can't get attribute",
                 )
-                rewritten_body.append(ast.copy_location(import_node, node))
-                continue
-            rewritten_body.append(node)
-        return rewritten_body
+            ):
+                return True
+            next_cursor = cursor.__cause__
+            if next_cursor is None:
+                next_cursor = cursor.__context__
+            cursor = next_cursor
+        return False
+
+    def _normalize_spawn_error(
+        self,
+        error: BaseException,
+        used_start_methods: set[str],
+    ) -> BaseException | None:
+        """Normalize spawn/forkserver import errors to a concise message.
+
+        Args:
+            error: Root execution exception.
+            used_start_methods: Start methods observed while running a notebook.
+
+        Returns:
+            Replacement exception when normalization applies, else None.
+
+        Example:
+            normalized = item._normalize_spawn_error(exc, {"spawn"})
+        """
+        if not used_start_methods.intersection(_SPAWN_START_METHODS):
+            return None
+        if not self._contains_spawn_module_error(error):
+            return None
+        return RuntimeError(_SPAWN_GUARDRAIL_MESSAGE)
 
     def _run_notebook_sync(self) -> None:
         """Execute the generated notebook with synchronous control flow.
@@ -617,28 +861,38 @@ class NotebookItem(pytest.Function):
         Example:
             item._run_notebook_sync()
         """
-        if self._is_async:
-            func = self._load_run_notebook()
-            if func is None:
-                return None
-            async_func = cast(Callable[[], Coroutine[Any, Any, Any]], func)
-            asyncio.run(async_func())
-        else:
-            code_obj, namespace = self._load_sync_module_code()
-            exec(code_obj, namespace)  # pylint: disable=exec-used
-        return None
-
-    async def _run_notebook_async(self) -> None:
-        """Execute the generated notebook under pytest-asyncio.
-
-        Example:
-            await item._run_notebook_async()
-        """
-        func = self._load_run_notebook()
-        if func is None:
-            return None
-        async_func = cast(Callable[[], Coroutine[Any, Any, Any]], func)
-        await async_func()
+        code_obj, namespace = self._load_module_code(
+            allow_top_level_await=self._is_async
+        )
+        notebook_module = cast(types.ModuleType, sys.modules[_SYNC_EXEC_MODULE_NAME])
+        used_start_methods: set[str] = set()
+        with _main_module_context(notebook_module):
+            with _spawn_guard_context(
+                self._validate_spawn_callable,
+                used_start_methods,
+            ):
+                try:
+                    if self._is_async:
+                        maybe_coroutine = eval(  # pylint: disable=eval-used
+                            code_obj,
+                            namespace,
+                        )
+                        if inspect.iscoroutine(maybe_coroutine):
+                            async_result = cast(
+                                Coroutine[Any, Any, Any],
+                                maybe_coroutine,
+                            )
+                            asyncio.run(async_result)
+                    else:
+                        exec(code_obj, namespace)  # pylint: disable=exec-used
+                except Exception as error:  # pylint: disable=broad-exception-caught
+                    normalized = self._normalize_spawn_error(
+                        error=error,
+                        used_start_methods=used_start_methods,
+                    )
+                    if normalized is not None:
+                        raise normalized from error
+                    raise
 
     def _find_cell_span(self, line_no: int) -> CellCodeSpan | None:
         """Find the cell span that contains a generated line number.

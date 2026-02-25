@@ -7,6 +7,43 @@ and this project follows Semantic Versioning.
 
 ## Unreleased
 
+## 1.0.0
+Version 1.0.0 focuses on making notebook execution behave much more like a real
+Jupyter runtime while tightening multiprocessing safety for notebook-defined
+targets. It also significantly increases regression and CI coverage, especially
+for Windows and Python 3.14, to improve reliability across supported versions.
+
+- improve notebook execution parity with Jupyter by executing generated notebook code at module scope
+- execute notebooks with `__name__ == "__main__"` semantics so guarded `main()` blocks run
+- preserve multiprocessing compatibility while using `__main__` semantics by aliasing the notebook runtime module during execution
+- add clear guardrails for `spawn`/`forkserver` multiprocessing with notebook-defined callables
+- harden `spawn`/`forkserver` guardrails by validating callables at class-level multiprocessing entrypoints
+  (`multiprocessing.process.BaseProcess.start`, `multiprocessing.pool.Pool.*`,
+  and `concurrent.futures.process.ProcessPoolExecutor.submit/map`) to prevent
+  import-path bypasses and produce deterministic guardrail errors
+- improve directive parsing by rejecting directives indented by more than 4 spaces
+- improve directive parsing by allowing trailing inline comments in directive values
+- document IPython runtime compatibility limits (magics/shell escapes, `get_ipython`, IPython globals)
+- emit pytest warnings when magics/shell escapes are commented out or IPython runtime globals are referenced
+- document `from __future__ import ...` hoisting semantics and warn when future imports appear outside the first selected code cell
+- add notebook regression tests for multiprocessing + async cases, guardrail failures, and directive parsing edge cases
+- add regression coverage for `if __name__ == "__main__":` notebook execution (`tests/notebooks/test_main.ipynb`)
+- add guardrail regression coverage for `multiprocessing.Process`, `get_context("spawn").Process`,
+  `from multiprocessing.pool import Pool`, and
+  `from concurrent.futures.process import ProcessPoolExecutor`
+- expand CI coverage across Python 3.10 to 3.14 and min/latest supported pytest versions
+- add a Windows CI test job (Python 3.14, latest supported pytest)
+- add a CI smoke test without `pytest-xdist`
+- update packaging/project metadata (`MANIFEST.in`, PyPI classifiers, `uv` default groups)
+- fix tests/notebooks/test_multiprocessing_local_function.ipynb for py 3.14
+- add windows test
+- fix a flaky Windows `pytest-xdist` worker crash caused by nested timeout
+  integration overwriting `pytest-timeout`'s `item.cancel_timeout` handle;
+  preserve/restore the outer timeout cancel callback while arming notebook
+  cell/notebook timers so outer test-level timeouts remain cancelable
+- add regression coverage for nested timeout-handle preservation in
+  `tests/test_timeout.py`
+
 
 ## 0.1.8
 - fix notebook-local multiprocessing targets in sync execution by avoiding

@@ -16,10 +16,139 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Main test suite on the default supported runtime.
-  pytest:
-    name: Tests (Python 3.12)
+  # Compatibility matrix over supported Python and pytest versions.
+  pytest-matrix:
+    name: Tests (Python ${{ matrix.python-version }}, pytest ${{ matrix.pytest-spec }})
     runs-on: ubuntu-latest
+    timeout-minutes: 4
+    continue-on-error: ${{ matrix.experimental || false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: "3.10"
+            pytest-spec: "pytest==7.0.0"
+          - python-version: "3.10"
+            pytest-spec: "pytest<9.1.0"
+
+          - python-version: "3.11"
+            pytest-spec: "pytest==7.0.0"
+          - python-version: "3.11"
+            pytest-spec: "pytest<9.1.0"
+
+          - python-version: "3.12"
+            pytest-spec: "pytest==7.0.0"
+          - python-version: "3.12"
+            pytest-spec: "pytest<9.1.0"
+
+          - python-version: "3.13"
+            pytest-spec: "pytest==7.0.0"
+          - python-version: "3.13"
+            pytest-spec: "pytest<9.1.0"
+
+          - python-version: "3.14"
+            pytest-spec: "pytest==7.3.2"
+          - python-version: "3.14"
+            pytest-spec: "pytest<9.1.0"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          allow-prereleases: true
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set matrix dependency constraints in pyproject
+        env:
+          PYTEST_SPEC: ${{ matrix.pytest-spec }}
+        run: |
+          sed -E -i "0,/'pytest/{//d;}" pyproject.toml
+          sed -E -i "s|'pytest[^']*',|'${PYTEST_SPEC}',|" pyproject.toml
+          test "$(grep -Fc "    '${PYTEST_SPEC}'," pyproject.toml)" -eq 1
+
+      - name: Show pyproject used for this matrix entry
+        run: cat pyproject.toml
+
+      - name: Re-lock dependencies for this matrix entry
+        run: uv lock
+
+      - name: Install dependencies
+        run: uv sync --frozen --group dev
+
+      - name: Run pytest
+        run: |
+          uv run --no-sync pytest --version
+          uv run --no-sync pytest
+
+  merge-gate:
+    if: ${{ always() }}
+    needs:
+      - pytest-matrix
+      - pytest-windows
+      - pytest-coverage
+      - pytest-no-xdist
+      - pylint
+      - pyright
+      - format
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          [[ "${{ needs.pytest-matrix.result }}" == "success" ]]
+          [[ "${{ needs.pytest-windows.result }}" == "success" ]]
+          [[ "${{ needs.pytest-coverage.result }}" == "success" ]]
+          [[ "${{ needs.pytest-no-xdist.result }}" == "success" ]]
+          [[ "${{ needs.pylint.result }}" == "success" ]]
+          [[ "${{ needs.pyright.result }}" == "success" ]]
+          [[ "${{ needs.format.result }}" == "success" ]]
+
+  # Windows coverage for platform-specific behavior.
+  pytest-windows:
+    name: Tests (Windows, Python 3.12)
+    runs-on: windows-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          allow-prereleases: true
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --frozen --group dev
+
+      - name: Run pytest (verbose)
+        env:
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          uv run pytest --version
+          uv run python -c "import platform, sys; print(sys.version); print(platform.platform())"
+          uv run pytest -vv -s --tb=long --showlocals --durations=25
+
+      - name: Re-run failed tests serially for diagnostics
+        if: failure()
+        continue-on-error: true
+        env:
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          uv run pytest -n 0 -vv -s --tb=long --full-trace --showlocals --durations=25 --lf
+
+  # Coverage report from one canonical runtime.
+  pytest-coverage:
+    name: Coverage (Python 3.12, latest pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,13 +164,51 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen  --group dev
 
-      - name: Run pytest
-        run: uv run pytest
+      - name: Run pytest with coverage
+        run: >
+          uv run pytest
+          --cov=pytest_nb_as_test
+          --cov-report=term-missing
+          --cov-report=xml:coverage.xml
+          --cov-report=lcov:lcov.info
 
-  # Compatibility test run against our lowest supported Python version.
-  pytest-old-versions:
-    name: Tests (Python 3.10 compatibility)
+      - name: Add coverage summary
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import xml.etree.ElementTree as et
+
+          summary_path = pathlib.Path(".coverage-summary.md")
+          xml_path = pathlib.Path("coverage.xml")
+          if not xml_path.exists():
+              summary_path.write_text("Coverage XML was not generated.\n")
+          else:
+              root = et.parse(xml_path).getroot()
+              line_rate = float(root.attrib.get("line-rate", 0.0))
+              summary_path.write_text(
+                  "## Coverage Report\n\n"
+                  f"- Line coverage: {line_rate * 100:.2f}%\n"
+                  "- Reports: `coverage.xml`, `lcov.info`\n"
+              )
+          PY
+          cat .coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          if-no-files-found: ignore
+          path: |
+            coverage.xml
+            lcov.info
+
+  # Ensure the package still works when pytest-xdist is not installed.
+  pytest-no-xdist:
+    name: Tests (no xdist smoke)
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,24 +216,27 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.12"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Install dependencies
-        run: uv sync --frozen  --group dev
+      - name: Install runtime dependencies only
+        run: uv sync --frozen
 
-      - name: Run pytest
+      - name: Verify pytest-xdist is not installed
         run: |
-          uv run pytest --version
-          uv run pytest
+          uv run python -c "import importlib.util,sys;sys.exit(0 if importlib.util.find_spec('xdist') is None else 1)"
+
+      - name: Run smoke pytest without repository config
+        run: uv run pytest -c /dev/null tests/test_plugin.py -k test_run_simple_notebook
 
 
   # Static analysis for code quality checks.
   pylint:
     name: Lint (pylint)
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -74,7 +244,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
@@ -89,6 +259,7 @@ jobs:
   pyright:
     name: Type Check (pyright)
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -111,6 +282,7 @@ jobs:
   format:
     name: Formatting Checks
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -143,6 +315,7 @@ jobs:
     name: Changelog Check
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
       - name: Checkout
         uses: actions/checkout@v4

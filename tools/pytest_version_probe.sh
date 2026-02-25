@@ -4,24 +4,25 @@ set -euo pipefail
 mkdir -p logs
 dist="pytest"
 excluded_versions=""
-python_versions=("3.10" "3.12" "3.14")
+python_versions=("3.14" "3.13" "3.12" "3.11" "3.10"  )
 extra_install=(pytest-timeout nbformat pytest-xdist matplotlib )
 
 for pyver in "${python_versions[@]}"; do
   py_tag="${pyver//./}"  # "3.10" -> "310", "3.12" -> "312", "3.14" -> "314"
 
-  # echo "walk-major-then-refine for Python ${pyver}"
-  # (
-  #   python -u tools/probe_version_compatability.py \
-  #     --dist "${dist}" \
-  #     --extra-install "${extra_install[@]}" \
-  #     --python-version "${pyver}" \
-  #     --max-workers 10 \
-  #     --exclude-versions "${excluded_versions}" \
-  #     --walk-major-then-refine \
-  #     --hide-failed-output \
-  #     --pytest-args -c /dev/null -n 10
-  # ) 2>&1 | tee "logs/${dist}_walk_major_py_${py_tag}.log"
+  echo "walk-major-then-refine for Python ${pyver}"
+  (
+    python -u tools/probe_version_compatability.py \
+      --dist "${dist}" \
+      --extra-install "${extra_install[@]}" \
+      --python-version "${pyver}" \
+      --max-workers 10 \
+      --exclude-versions "${excluded_versions}" \
+      --walk-major-then-refine \
+      --pytest-fail-fast \
+      --pytest-args -c /dev/null -n 10
+  ) 2>&1 | tee "logs/${dist}_walk_major_py_${py_tag}.log"
+  #       --hide-failed-output \
 
   echo "exhaustive search for Python ${pyver}"
   (
@@ -33,6 +34,7 @@ for pyver in "${python_versions[@]}"; do
       --hide-failed-output \
       --exclude-versions "${excluded_versions}" \
       --no-stop-on-first-fail \
+      --pytest-fail-fast \
       --pytest-args -c /dev/null -n 15
   ) 2>&1 | tee "logs/${dist}_exhaustive_py_${py_tag}.log"
 done
