@@ -1,6 +1,6 @@
 [project]
 name = "pytest-nb-as-test"
-version = "0.1.8"
+version = "1.0.0"
 description = "Use notebooks as pytests. Keep your notebooks working."
 readme = "README.md"
 requires-python = ">=3.10,<3.15"
