@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project follows Semantic Versioning.
 
 ## Unreleased
+
+## 1.0.0
+Version 1.0.0 focuses on making notebook execution behave much more like a real
+Jupyter runtime while tightening multiprocessing safety for notebook-defined
+targets. It also significantly increases regression and CI coverage, especially
+for Windows and Python 3.14, to improve reliability across supported versions.
+
 - improve notebook execution parity with Jupyter by executing generated notebook code at module scope
 - execute notebooks with `__name__ == "__main__"` semantics so guarded `main()` blocks run
 - preserve multiprocessing compatibility while using `__main__` semantics by aliasing the notebook runtime module during execution

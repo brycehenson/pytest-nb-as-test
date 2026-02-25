@@ -420,3 +420,29 @@ This plugin is aimed at *CI enforcement of example notebooks* in scientific code
 
 If you need output regression diffs, prefer `nbval` or `pytest-notebook`.
 If you need faithful kernel execution semantics, prefer `pytest-nbmake`.
+
+## Planned
+
+### Stricter `must-raise-exception` matching (target: v1.1)
+
+`v1.0` supports a boolean `must-raise-exception=True|False`.
+When enabled, any `Exception` satisfies the directive.
+
+Planned enhancement:
+
+- allow matching the expected exception type separately from the message
+- keep current boolean behavior as the default for backward compatibility
+
+Proposed directives:
+
+```python
+# pytest-nb-as-test: must-raise-exception=True
+# pytest-nb-as-test: must-raise-exception-type=ValueError
+# pytest-nb-as-test: must-raise-exception-match=intentional error
+```
+
+Intended behavior:
+
+- `must-raise-exception-type` validates the exception class
+- `must-raise-exception-match` validates the error message (regex-style match)
+- both are optional refinements when `must-raise-exception=True`

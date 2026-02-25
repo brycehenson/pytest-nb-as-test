@@ -30,16 +30,24 @@ jobs:
             pytest-spec: "pytest==7.0.0"
           - python-version: "3.10"
             pytest-spec: "pytest<9.1.0"
+
           - python-version: "3.11"
             pytest-spec: "pytest==7.0.0"
           - python-version: "3.11"
             pytest-spec: "pytest<9.1.0"
+
           - python-version: "3.12"
             pytest-spec: "pytest==7.0.0"
           - python-version: "3.12"
             pytest-spec: "pytest<9.1.0"
+
+          - python-version: "3.13"
+            pytest-spec: "pytest==7.0.0"
           - python-version: "3.13"
             pytest-spec: "pytest<9.1.0"
+
+          - python-version: "3.14"
+            pytest-spec: "pytest<7.3.2"
           - python-version: "3.14"
             pytest-spec: "pytest<9.1.0"
 
