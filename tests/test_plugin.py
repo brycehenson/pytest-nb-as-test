@@ -24,7 +24,7 @@ import shutil
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -47,6 +47,51 @@ SPAWN_GUARDRAIL_MESSAGE = (
     "spawn cannot pickle notebook defined callables, "
     "put worker targets in an importable .py module"
 )
+
+
+def _has_numprocesses_arg(args: tuple[str, ...]) -> bool:
+    """Return True when explicit xdist process count args are present.
+
+    Args:
+        args: Positional pytest CLI arguments.
+
+    Returns:
+        True when ``-n``/``--numprocesses`` is explicitly provided.
+
+    Example:
+        assert _has_numprocesses_arg(("-n", "2"))
+    """
+    for arg in args:
+        if arg in {"-n", "--numprocesses"}:
+            return True
+        if arg.startswith("-n") and len(arg) > 2:
+            return True
+        if arg.startswith("--numprocesses="):
+            return True
+    return False
+
+
+def _runpytest_subprocess(pytester: pytest.Pytester, *args: str) -> Any:
+    """Run ``pytester.runpytest_subprocess`` with nested xdist disabled by default.
+
+    When the outer test session already runs under xdist, invoking ``pytest``
+    again from inside tests can create unstable nested worker trees,
+    particularly on Windows. Defaulting inner invocations to ``-n 0`` keeps
+    subprocess test runs serial unless a test explicitly requests xdist.
+
+    Args:
+        pytester: Pytester fixture instance.
+        *args: Additional CLI arguments for the subprocess pytest run.
+
+    Returns:
+        The subprocess run result from pytest.
+
+    Example:
+        result = _runpytest_subprocess(pytester, "-q")
+    """
+    if PYTEST_XDIST_AVAILABLE and not _has_numprocesses_arg(args):
+        return pytester.runpytest_subprocess("-n", "0", *args)
+    return pytester.runpytest_subprocess(*args)
 
 
 def test_pytest_configure_rejects_incompatible_pytest_asyncio_pair(
@@ -199,7 +244,7 @@ def test_run_simple_notebook(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "example_simple_123.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(passed=1)
 
 
@@ -222,7 +267,7 @@ def test_conftest_autouse_fixture_applies_to_notebooks(
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "example_simple_123.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(errors=1)
 
 
@@ -253,7 +298,7 @@ def test_conftest_notebook_marker_behavior(pytester: pytest.Pytester) -> None:
     )
     src = fixture_case_dir / "test_conftest_marker.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(passed=2)
 
 
@@ -278,7 +323,7 @@ def test_marker_expression_skips_notebooks(pytester: pytest.Pytester) -> None:
             """
         ).lstrip()
     )
-    result = pytester.runpytest_subprocess("-m", "not notebook")
+    result = _runpytest_subprocess(pytester, "-m", "not notebook")
     result.assert_outcomes(passed=1, deselected=1)
 
 
@@ -302,12 +347,12 @@ def test_conftest_notebook_detection_sets_matplotlib_backend(
         fixture_case_dir / "test_regular_backend.py",
         pytester.path / "test_regular_backend.py",
     )
-    result = pytester.runpytest_subprocess("test_regular_backend.py")
+    result = _runpytest_subprocess(pytester, "test_regular_backend.py")
     result.assert_outcomes(passed=1)
 
     src = fixture_case_dir / "test_matplotlib_backend.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess(src.name)
+    result = _runpytest_subprocess(pytester, src.name)
     result.assert_outcomes(passed=1)
 
 
@@ -325,7 +370,7 @@ def test_notebook_glob_filters(pytester: pytest.Pytester) -> None:
     shutil.copy2(src, pytester.path / src.name)
     src = notebooks_dir / "test_async_exec_mode.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess("--notebook-glob=example_simple_*.ipynb")
+    result = _runpytest_subprocess(pytester, "--notebook-glob=example_simple_*.ipynb")
     result.assert_outcomes(passed=1)
 
 
@@ -344,7 +389,7 @@ def test_xdist_worksteal_hookwrapper(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "example_simple_123.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess("-n", "2", "--dist", "worksteal")
+    result = _runpytest_subprocess(pytester, "-n", "2", "--dist", "worksteal")
     result.assert_outcomes(passed=1)
 
 
@@ -358,7 +403,7 @@ def test_default_all_directive(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_default_all_false.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(passed=1)
 
 
@@ -403,7 +448,7 @@ def test_over_indented_directive_errors(pytester: pytest.Pytester) -> None:
         ).lstrip(),
         encoding="utf-8",
     )
-    result = pytester.runpytest_subprocess(notebook_path.name)
+    result = _runpytest_subprocess(pytester, notebook_path.name)
     result.assert_outcomes(errors=1)
     output = result.stdout.str() + result.stderr.str()
     assert "Directive lines may be indented by at most 4 leading spaces" in output
@@ -419,7 +464,7 @@ def test_test_cell_override(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_test_cell_override.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(passed=1)
 
 
@@ -437,7 +482,8 @@ def test_test_cell_directive_with_trailing_comment(
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_trailing_test_cell_comment.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess(
+    result = _runpytest_subprocess(
+        pytester,
         "--notebook-default-all=false",
         src.name,
     )
@@ -455,7 +501,7 @@ def test_must_raise_exception(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_must_raise.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(passed=1)
 
 
@@ -475,7 +521,7 @@ def test_strip_line_magics(pytester: pytest.Pytester) -> None:
     # specify a directory for generated scripts
     gen_dir = pytester.path / "generated"
     gen_dir.mkdir()
-    result = pytester.runpytest_subprocess(f"--notebook-keep-generated={gen_dir}")
+    result = _runpytest_subprocess(pytester, f"--notebook-keep-generated={gen_dir}")
     result.assert_outcomes(passed=1)
     output = result.stdout.str() + result.stderr.str()
     assert "commented out IPython magics/shell escapes" in output
@@ -505,7 +551,7 @@ def test_strip_indented_magics(pytester: pytest.Pytester) -> None:
     shutil.copy2(src, pytester.path / src.name)
     gen_dir = pytester.path / "generated"
     gen_dir.mkdir()
-    result = pytester.runpytest_subprocess(f"--notebook-keep-generated={gen_dir}")
+    result = _runpytest_subprocess(pytester, f"--notebook-keep-generated={gen_dir}")
     result.assert_outcomes(passed=1)
     gen_files = list(gen_dir.glob("*.py"))
     assert gen_files, "No generated script produced"
@@ -526,7 +572,7 @@ def test_warn_on_get_ipython_and_ipython_globals(pytester: pytest.Pytester) -> N
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_get_ipython_globals.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(passed=1)
     output = result.stdout.str() + result.stderr.str()
     assert "references IPython runtime symbol(s)" in output
@@ -581,7 +627,7 @@ def test_warn_on_get_ipython_call(pytester: pytest.Pytester) -> None:
         ).lstrip(),
         encoding="utf-8",
     )
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(passed=1)
     output = result.stdout.str() + result.stderr.str()
     assert "references IPython runtime symbol(s)" in output
@@ -598,7 +644,7 @@ def test_cli_default_all_false(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "example_simple_123.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess("--notebook-default-all=false")
+    result = _runpytest_subprocess(pytester, "--notebook-default-all=false")
     result.assert_outcomes(skipped=1)
 
 
@@ -622,10 +668,10 @@ def test_cli_overrides_ini_default_all(pytester: pytest.Pytester) -> None:
             """
         ).lstrip()
     )
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(skipped=1)
 
-    result = pytester.runpytest_subprocess("--notebook-default-all=true")
+    result = _runpytest_subprocess(pytester, "--notebook-default-all=true")
     result.assert_outcomes(passed=1)
 
 
@@ -641,7 +687,7 @@ def test_async_exec_mode(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_async_exec_mode.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(passed=1)
 
 
@@ -667,7 +713,8 @@ def test_auto_exec_mode(pytester: pytest.Pytester) -> None:
     gen_dir.mkdir()
 
     # Test sync notebook with auto mode (should generate sync wrapper)
-    result = pytester.runpytest_subprocess(
+    result = _runpytest_subprocess(
+        pytester,
         "--notebook-exec-mode=auto",
         "--notebook-glob=example_simple_123.ipynb",
         f"--notebook-keep-generated={gen_dir}",
@@ -680,7 +727,8 @@ def test_auto_exec_mode(pytester: pytest.Pytester) -> None:
     assert "async def run_notebook():" not in sync_content
 
     # Test async notebook with auto mode (should generate async wrapper)
-    result = pytester.runpytest_subprocess(
+    result = _runpytest_subprocess(
+        pytester,
         "--notebook-exec-mode=auto",
         "--notebook-glob=test_async_exec_mode.ipynb",
         f"--notebook-keep-generated={gen_dir}",
@@ -709,7 +757,8 @@ def test_auto_exec_mode_detects_async_for_and_with(
     gen_dir = pytester.path / "generated"
     gen_dir.mkdir()
 
-    result = pytester.runpytest_subprocess(
+    result = _runpytest_subprocess(
+        pytester,
         "--notebook-exec-mode=auto",
         f"--notebook-keep-generated={gen_dir}",
     )
@@ -734,7 +783,8 @@ def test_sync_exec_mode(pytester: pytest.Pytester) -> None:
     shutil.copy2(src, pytester.path / src.name)
     gen_dir = pytester.path / "generated"
     gen_dir.mkdir()
-    result = pytester.runpytest_subprocess(
+    result = _runpytest_subprocess(
+        pytester,
         "--notebook-exec-mode=sync",
         f"--notebook-keep-generated={gen_dir}",
     )
@@ -758,7 +808,7 @@ def test_skip_all_directive(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_skip_all.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(skipped=1)
 
 
@@ -774,7 +824,7 @@ def test_keep_generated_none(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "error_cases" / "test_failure.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess("--notebook-keep-generated=none")
+    result = _runpytest_subprocess(pytester, "--notebook-keep-generated=none")
     result.assert_outcomes(failed=1)
     assert "generated notebook script" not in result.stdout.str()
 
@@ -791,7 +841,7 @@ def test_simplified_traceback_shows_failing_cell(pytester: pytest.Pytester) -> N
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "error_cases" / "test_failure_multicell.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess("--notebook-keep-generated=none")
+    result = _runpytest_subprocess(pytester, "--notebook-keep-generated=none")
     result.assert_outcomes(failed=1)
     output = result.stdout.str()
     assert "Notebook cell failed: test_failure_multicell.ipynb cell=1" in output
@@ -814,7 +864,7 @@ def test_error_line_single_cell(pytester: pytest.Pytester) -> None:
     args = ("-s", "test_failure.ipynb")
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     result.assert_outcomes(failed=1)
     assert_output_line(result.stdout.str(), '> 1 | raise RuntimeError("boom")')
 
@@ -834,7 +884,7 @@ def test_error_line_multicell(pytester: pytest.Pytester) -> None:
     args = ("-s", "test_failure_multicell.ipynb")
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     result.assert_outcomes(failed=1)
     output = result.stdout.str()
     assert_output_line(
@@ -862,7 +912,7 @@ def test_error_line_print_and_error(pytester: pytest.Pytester) -> None:
     args = ("-s", "test_print_and_error.ipynb")
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     result.assert_outcomes(failed=1)
     assert_output_line(
         result.stdout.str(),
@@ -924,7 +974,7 @@ def test_main_guard_notebook_semantics_executes(pytester: pytest.Pytester) -> No
     args = ("-s", notebook_path.name)
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     result.assert_outcomes(passed=1)
 
 
@@ -949,7 +999,7 @@ def test_error_case_asyncio_processpool_fork_notebook_worker(
     args = ("-s", src.name)
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     if "fork" not in MP_START_METHODS:
         result.assert_outcomes(passed=1)
         output = result.stdout.str()
@@ -984,7 +1034,7 @@ def test_error_case_asyncio_processpool_spawn_notebook_worker(
     args = ("-s", src.name)
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     result.assert_outcomes(passed=1)
 
 
@@ -1006,7 +1056,7 @@ def test_multiprocessing_local_function_runs(pytester: pytest.Pytester) -> None:
     args = ("-s", src.name)
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     if "fork" not in MP_START_METHODS:
         result.assert_outcomes(skipped=1)
         return
@@ -1032,7 +1082,7 @@ def test_mp_fork_top_level_function_async_exec_mode_runs(
     args = ("--notebook-exec-mode=async", "-s", src.name)
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     result.assert_outcomes(passed=1)
 
 
@@ -1058,7 +1108,7 @@ def test_asyncio_multiprocessing_pool_spawn_importable_worker_runs(
     args = ("--notebook-exec-mode=async", "-s", src.name)
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     result.assert_outcomes(passed=1)
 
 
@@ -1081,7 +1131,7 @@ def test_asyncio_processpool_spawn_importable_worker_runs(
     args = ("--notebook-exec-mode=async", "-s", src.name)
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     result.assert_outcomes(passed=1)
 
 
@@ -1102,7 +1152,7 @@ def test_mp_spawn_pool_notebook_callable_reports_guardrail(
     args = ("--notebook-exec-mode=sync", "-s", src.name)
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     result.assert_outcomes(failed=1)
     assert_spawn_guardrail_message(result.stdout.str() + result.stderr.str())
 
@@ -1126,7 +1176,7 @@ def test_mp_forkserver_pool_notebook_callable_reports_guardrail(
     args = ("--notebook-exec-mode=sync", "-s", src.name)
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     result.assert_outcomes(failed=1)
     assert_spawn_guardrail_message(result.stdout.str() + result.stderr.str())
 
@@ -1148,7 +1198,7 @@ def test_process_pool_executor_spawn_notebook_callable_reports_guardrail(
     args = ("--notebook-exec-mode=sync", "-s", src.name)
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     result.assert_outcomes(failed=1)
     assert_spawn_guardrail_message(result.stdout.str() + result.stderr.str())
 
@@ -1172,7 +1222,7 @@ def test_mp_process_spawn_notebook_callable_reports_guardrail(
     args = ("--notebook-exec-mode=sync", "-s", src.name)
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     result.assert_outcomes(failed=1)
     assert_spawn_guardrail_message(result.stdout.str() + result.stderr.str())
 
@@ -1196,7 +1246,7 @@ def test_ctx_process_spawn_notebook_callable_reports_guardrail(
     args = ("--notebook-exec-mode=sync", "-s", src.name)
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     result.assert_outcomes(failed=1)
     assert_spawn_guardrail_message(result.stdout.str() + result.stderr.str())
 
@@ -1222,7 +1272,7 @@ def test_mp_pool_import_path_spawn_notebook_callable_reports_guardrail(
     args = ("--notebook-exec-mode=sync", "-s", src.name)
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     result.assert_outcomes(failed=1)
     assert_spawn_guardrail_message(result.stdout.str() + result.stderr.str())
 
@@ -1246,7 +1296,7 @@ def test_cfe_import_path_spawn_notebook_callable_reports_guardrail(
     args = ("--notebook-exec-mode=sync", "-s", src.name)
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     result.assert_outcomes(failed=1)
     assert_spawn_guardrail_message(result.stdout.str() + result.stderr.str())
 
@@ -1269,7 +1319,7 @@ def test_notebook_timeout_directive_first_cell_only(
         / "test_failure_notebook_timeout_not_in_first_cell.ipynb"
     )
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(errors=1)
     output = result.stdout.str() + result.stderr.str()
     assert (
@@ -1295,7 +1345,8 @@ def test_cell_timeout_directive_with_trailing_comment(
     shutil.copy2(src, pytester.path / src.name)
     generated_dir = pytester.path / "generated"
     generated_dir.mkdir()
-    result = pytester.runpytest_subprocess(
+    result = _runpytest_subprocess(
+        pytester,
         src.name,
         f"--notebook-keep-generated={generated_dir}",
     )
@@ -1324,7 +1375,7 @@ def test_failure_notebook_timeout_reports_pytest_timeout(
     args = ("-s", "test_failure_notebook_timeout.ipynb")
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     output = result.stdout.str() + result.stderr.str()
     assert result.ret != 0, (
         "Expected pytest subprocess to fail from timeout, "
@@ -1355,7 +1406,7 @@ def test_failure_cell_timeout_reports_pytest_timeout(
     args = ("-s", "test_failure_cell_timeout.ipynb")
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
-    result = pytester.runpytest_subprocess(*args)
+    result = _runpytest_subprocess(pytester, *args)
     output = result.stdout.str() + result.stderr.str()
     assert result.ret != 0, (
         "Expected pytest subprocess to fail from timeout, "
@@ -1381,7 +1432,7 @@ def test_cell_timeout_uses_pytest_timeout(pytester: pytest.Pytester) -> None:
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_cell_timeout.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(passed=1)
 
 
@@ -1398,5 +1449,5 @@ def test_notebook_timeout_uses_pytest_timeout(pytester: pytest.Pytester) -> None
     notebooks_dir = Path(__file__).parent / "notebooks"
     src = notebooks_dir / "test_notebook_timeout.ipynb"
     shutil.copy2(src, pytester.path / src.name)
-    result = pytester.runpytest_subprocess()
+    result = _runpytest_subprocess(pytester)
     result.assert_outcomes(passed=1)

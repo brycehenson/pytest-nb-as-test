@@ -127,7 +127,7 @@ jobs:
   pytest-coverage:
     name: Coverage (Python 3.12, latest pytest)
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@v4
