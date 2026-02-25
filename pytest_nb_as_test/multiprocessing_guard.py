@@ -273,65 +273,6 @@ class _NotebookPoolProxy:  # pylint: disable=too-many-arguments,too-many-positio
         return getattr(self._pool, name)
 
 
-class _NotebookContextProxy:
-    """Proxy around ``multiprocessing`` context objects.
-
-    Example:
-        guarded = _NotebookContextProxy(ctx, "spawn", validator)
-    """
-
-    def __init__(
-        self,
-        context: Any,
-        start_method: str,
-        validator: Callable[[Callable[..., Any], str], None],
-    ) -> None:
-        self._context = context
-        self._start_method = start_method
-        self._validator = validator
-
-    def Pool(  # pylint: disable=invalid-name
-        self, *args: Any, **kwargs: Any
-    ) -> _NotebookPoolProxy:
-        """Create a guarded pool from the wrapped context.
-
-        Args:
-            *args: Positional arguments for ``context.Pool``.
-            **kwargs: Keyword arguments for ``context.Pool``.
-
-        Returns:
-            Guarded pool proxy.
-
-        Example:
-            pool = guarded.Pool(processes=2)
-        """
-        pool = self._context.Pool(*args, **kwargs)
-        return _NotebookPoolProxy(pool, self._start_method, self._validator)
-
-    def get_start_method(self, allow_none: bool = False) -> str:
-        """Return the wrapped context start method.
-
-        Args:
-            allow_none: Compatibility argument used by stdlib context APIs.
-
-        Example:
-            mode = guarded.get_start_method()
-        """
-        del allow_none
-        return self._start_method
-
-    def __getattr__(self, name: str) -> Any:
-        """Delegate unknown attributes to the wrapped context.
-
-        Args:
-            name: Attribute name.
-
-        Example:
-            proc = guarded.Process
-        """
-        return getattr(self._context, name)
-
-
 @contextmanager
 def _spawn_guard_context(  # pylint: disable=too-many-locals
     validator: Callable[[Callable[..., Any], str], None],
