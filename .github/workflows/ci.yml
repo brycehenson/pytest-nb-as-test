@@ -64,11 +64,22 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Install dependencies
-        run: uv sync --frozen  --group dev
+      - name: Set matrix dependency constraints in pyproject
+        env:
+          PYTEST_SPEC: ${{ matrix.pytest-spec }}
+        run: |
+          sed -E -i "0,/'pytest/{//d;}" pyproject.toml
+          sed -E -i "s|'pytest[^']*',|'${PYTEST_SPEC}',|" pyproject.toml
+          test "$(grep -Fc "    '${PYTEST_SPEC}'," pyproject.toml)" -eq 1
 
-      - name: Select pytest version for this matrix entry
-        run: uv pip install --upgrade "${{ matrix.pytest-spec }}"
+      - name: Show pyproject used for this matrix entry
+        run: cat pyproject.toml
+
+      - name: Re-lock dependencies for this matrix entry
+        run: uv lock
+
+      - name: Install dependencies
+        run: uv sync --frozen --group dev
 
       - name: Run pytest
         run: |

@@ -939,6 +939,11 @@ def test_error_case_asyncio_processpool_fork_notebook_worker(
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
     result = pytester.runpytest_subprocess(*args)
+    if "fork" not in MP_START_METHODS:
+        result.assert_outcomes(passed=1)
+        output = result.stdout.str()
+        assert "fork start method not available" in output
+        return
     result.assert_outcomes(failed=1)
     output = result.stdout.str()
     assert "RuntimeError unexpected success" in output
@@ -991,6 +996,9 @@ def test_multiprocessing_local_function_runs(pytester: pytest.Pytester) -> None:
     if PYTEST_XDIST_AVAILABLE:
         args = ("-n", "0", *args)
     result = pytester.runpytest_subprocess(*args)
+    if "fork" not in MP_START_METHODS:
+        result.assert_outcomes(skipped=1)
+        return
     result.assert_outcomes(passed=1)
 
 
