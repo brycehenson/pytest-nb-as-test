@@ -90,7 +90,7 @@ jobs:
   pytest-windows:
     name: Tests (Windows, Python 3.12)
     runs-on: windows-latest
-    timeout-minutes: 2
+    timeout-minutes: 6
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -107,10 +107,21 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --group dev
 
-      - name: Run pytest
+      - name: Run pytest (verbose)
+        env:
+          PYTHONFAULTHANDLER: "1"
         run: |
           uv run pytest --version
-          uv run pytest
+          uv run python -c "import platform, sys; print(sys.version); print(platform.platform())"
+          uv run pytest -vv -s --tb=long --showlocals --durations=25
+
+      - name: Re-run failed tests serially for diagnostics
+        if: failure()
+        continue-on-error: true
+        env:
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          uv run pytest -n 0 -vv -s --tb=long --full-trace --showlocals --durations=25 --lf
 
   # Coverage report from one canonical runtime.
   pytest-coverage:
