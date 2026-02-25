@@ -634,6 +634,27 @@ def test_warn_on_get_ipython_call(pytester: pytest.Pytester) -> None:
     assert "get_ipython()" in output
 
 
+def test_warn_on_non_leading_future_import(pytester: pytest.Pytester) -> None:
+    """Warn when future imports appear outside the first selected code cell.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_warn_on_non_leading_future_import
+    """
+    notebooks_dir = Path(__file__).parent / "notebooks"
+    src = notebooks_dir / "test_future_non_leading_warning.ipynb"
+    shutil.copy2(src, pytester.path / src.name)
+    result = _runpytest_subprocess(pytester)
+    result.assert_outcomes(passed=1)
+    output = result.stdout.str() + result.stderr.str()
+    assert (
+        "found 'from __future__ import ...' in non-leading selected cell(s)" in output
+    )
+    assert "differs from Jupyter's per-cell execution semantics" in output
+
+
 def test_cli_default_all_false(pytester: pytest.Pytester) -> None:
     """Override default-all via CLI option.
 

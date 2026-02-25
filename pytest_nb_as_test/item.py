@@ -465,9 +465,10 @@ class NotebookFile(pytest.File):
 
         prepared_cells: list[tuple[SelectedCell, str]] = []
         future_imports: list[str] = []
+        non_leading_future_import_cell_indexes: list[int] = []
         magic_rewritten_cell_indexes: list[int] = []
         ipython_symbol_cell_indexes: dict[str, set[int]] = {}
-        for cell in selected:
+        for selected_position, cell in enumerate(selected):
             if disable_magics:
                 transformed = _comment_out_ipython_magics(cell.source)
                 if transformed != cell.source:
@@ -479,6 +480,8 @@ class NotebookFile(pytest.File):
                     ipython_symbol_cell_indexes[symbol] = set()
                 ipython_symbol_cell_indexes[symbol].add(cell.index)
             extracted_future, remaining = _extract_future_imports(transformed)
+            if extracted_future and selected_position > 0:
+                non_leading_future_import_cell_indexes.append(cell.index)
             for future_line in extracted_future:
                 if future_line not in future_imports:
                     future_imports.append(future_line)
@@ -514,6 +517,20 @@ class NotebookFile(pytest.File):
                     "does not provide a Jupyter/IPython shell context. "
                     "See pytest-nb-as-test README "
                     "'IPython Runtime Compatibility'."
+                )
+            )
+
+        if non_leading_future_import_cell_indexes:
+            future_cells = ", ".join(
+                str(index) for index in non_leading_future_import_cell_indexes
+            )
+            self.warn(
+                pytest.PytestWarning(
+                    f"Notebook {self.path.name}: found 'from __future__ import ...' "
+                    f"in non-leading selected cell(s) {future_cells}. "
+                    "pytest-nb-as-test hoists future imports to the top of generated "
+                    "code, which differs from Jupyter's per-cell execution semantics. "
+                    "See pytest-nb-as-test README 'IPython Runtime Compatibility'."
                 )
             )
 

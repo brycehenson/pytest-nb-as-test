@@ -60,10 +60,15 @@ Current contract:
 
 - Lines that start with `%`, `%%`, or `!` are commented out before execution.
 - `get_ipython()` and IPython globals (`In`, `Out`, `_ih`, `_oh`, `_dh`) are not provided by the runtime.
+- `from __future__ import ...` lines are hoisted to the top of generated code across selected cells.
 
-When either behavior is detected, the plugin emits a `PytestWarning` during collection so it is visible in pytest output.
+When unsupported IPython runtime usage is detected, and when future imports appear outside the first selected code cell,
+the plugin emits a `PytestWarning` during collection so it is visible in pytest output.
 
 Implication: a notebook can pass while skipping notebook-only side effects from magics or shell escapes.
+Also, future import behavior differs from Jupyter: in Jupyter, a future import only affects cells compiled after that cell executes;
+in `pytest-nb-as-test`, hoisted future imports apply globally to selected cells in the generated script.
+When a future import appears outside the first selected code cell, the plugin emits a `PytestWarning` during collection.
 If you need strict kernel-faithful semantics, use a kernel-based plugin such as `pytest-nbmake`.
 
 ## Cell directives

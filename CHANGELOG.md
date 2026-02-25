@@ -25,6 +25,7 @@ for Windows and Python 3.14, to improve reliability across supported versions.
 - improve directive parsing by allowing trailing inline comments in directive values
 - document IPython runtime compatibility limits (magics/shell escapes, `get_ipython`, IPython globals)
 - emit pytest warnings when magics/shell escapes are commented out or IPython runtime globals are referenced
+- document `from __future__ import ...` hoisting semantics and warn when future imports appear outside the first selected code cell
 - add notebook regression tests for multiprocessing + async cases, guardrail failures, and directive parsing edge cases
 - add regression coverage for `if __name__ == "__main__":` notebook execution (`tests/notebooks/test_main.ipynb`)
 - add guardrail regression coverage for `multiprocessing.Process`, `get_context("spawn").Process`,
