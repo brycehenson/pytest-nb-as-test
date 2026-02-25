@@ -18,7 +18,7 @@ concurrency:
 jobs:
   # Compatibility matrix over supported Python and pytest versions.
   pytest:
-    name: Tests (Python ${{ matrix.python-version }}, pytest ${{ matrix.pytest-label }})
+    name: Tests (Python ${{ matrix.python-version }}, pytest ${{ matrix.pytest-spec }})
     runs-on: ubuntu-latest
     timeout-minutes: 2
     continue-on-error: ${{ matrix.experimental || false }}
@@ -28,29 +28,21 @@ jobs:
         include:
           - python-version: "3.10"
             pytest-spec: "pytest==7.0.0"
-            pytest-label: "7.0.0 (min)"
           - python-version: "3.10"
             pytest-spec: "pytest<9.1.0"
-            pytest-label: "latest <9.1.0"
           - python-version: "3.11"
             pytest-spec: "pytest==7.0.0"
-            pytest-label: "7.0.0 (min)"
           - python-version: "3.11"
             pytest-spec: "pytest<9.1.0"
-            pytest-label: "latest <9.1.0"
           - python-version: "3.12"
             pytest-spec: "pytest==7.0.0"
-            pytest-label: "7.0.0 (min)"
           - python-version: "3.12"
             pytest-spec: "pytest<9.1.0"
-            pytest-label: "latest <9.1.0"
           - python-version: "3.13"
             pytest-spec: "pytest<9.1.0"
-            pytest-label: "latest <9.1.0"
           - python-version: "3.14"
             pytest-spec: "pytest<9.1.0"
-            pytest-label: "latest <9.1.0"
-            experimental: true
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -29,6 +29,12 @@ and this project follows Semantic Versioning.
 - update packaging/project metadata (`MANIFEST.in`, PyPI classifiers, `uv` default groups)
 - fix tests/notebooks/test_multiprocessing_local_function.ipynb for py 3.14
 - add windows test
+- fix a flaky Windows `pytest-xdist` worker crash caused by nested timeout
+  integration overwriting `pytest-timeout`'s `item.cancel_timeout` handle;
+  preserve/restore the outer timeout cancel callback while arming notebook
+  cell/notebook timers so outer test-level timeouts remain cancelable
+- add regression coverage for nested timeout-handle preservation in
+  `tests/test_timeout.py`
 
 
 ## 0.1.8
