@@ -451,3 +451,14 @@ Intended behavior:
 - `must-raise-exception-type` validates the exception class
 - `must-raise-exception-match` validates the error message (regex-style match)
 - both are optional refinements when `must-raise-exception=True`
+
+### Configurable relative-path base for notebooks
+
+Some notebooks assume relative paths resolve from the notebook's own folder,
+while others assume paths resolve from where `pytest` is launched.
+
+Planned enhancement:
+
+- add an option to choose the relative-path base
+- support notebook-folder mode (relative to the `.ipynb` location)
+- support pytest-cwd mode (relative to the `pytest` working directory)
