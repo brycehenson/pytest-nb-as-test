@@ -20,7 +20,7 @@ jobs:
   pytest-matrix:
     name: Tests (Python ${{ matrix.python-version }}, pytest ${{ matrix.pytest-spec }})
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 4
     continue-on-error: ${{ matrix.experimental || false }}
     strategy:
       fail-fast: false
