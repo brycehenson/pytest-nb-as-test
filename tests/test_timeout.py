@@ -34,7 +34,7 @@ def test_pytest_timeout_context_restores_outer_cancel_handle() -> None:
                 cancel()
 
     hook_proxy = _HookProxy()
-    item = SimpleNamespace(
+    item: Any = SimpleNamespace(
         config=SimpleNamespace(pluginmanager=SimpleNamespace(hook=hook_proxy))
     )
 

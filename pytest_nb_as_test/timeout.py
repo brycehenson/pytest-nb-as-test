@@ -188,7 +188,9 @@ def _pytest_timeout_context(
         if hasattr(item, "cancel_timeout"):
             delattr(item, "cancel_timeout")
     else:
-        item.cancel_timeout = previous_cancel
+        # pytest.Item does not declare this dynamic attribute, but pytest-timeout
+        # installs and expects it.
+        setattr(item, "cancel_timeout", previous_cancel)
     try:
         yield
     finally:

@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   # Compatibility matrix over supported Python and pytest versions.
-  pytest:
+  pytest-matrix:
     name: Tests (Python ${{ matrix.python-version }}, pytest ${{ matrix.pytest-spec }})
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -77,6 +77,27 @@ jobs:
         run: |
           uv run --no-sync pytest --version
           uv run --no-sync pytest
+
+  merge-gate:
+    if: ${{ always() }}
+    needs:
+      - pytest-matrix
+      - pytest-windows
+      - pytest-coverage
+      - pytest-no-xdist
+      - pylint
+      - pyright
+      - format
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          [[ "${{ needs.pytest-matrix.result }}" == "success" ]]
+          [[ "${{ needs.pytest-windows.result }}" == "success" ]]
+          [[ "${{ needs.pytest-coverage.result }}" == "success" ]]
+          [[ "${{ needs.pytest-no-xdist.result }}" == "success" ]]
+          [[ "${{ needs.pylint.result }}" == "success" ]]
+          [[ "${{ needs.pyright.result }}" == "success" ]]
+          [[ "${{ needs.format.result }}" == "success" ]]
 
   # Windows coverage for platform-specific behavior.
   pytest-windows:
