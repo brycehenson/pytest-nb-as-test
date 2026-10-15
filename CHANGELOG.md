@@ -7,6 +7,11 @@ and this project follows Semantic Versioning.
 
 ## Unreleased
 
+- add pytest 9 support by using the current `pytest_collect_file(file_path, parent)`
+  hook signature, which remains supported by pytest 7 and 8
+- test the minimum supported pytest 7 release plus explicit pytest 8 and pytest 9
+  releases in CI so hook-registration incompatibilities fail before collection
+
 ## 1.0.0
 Version 1.0.0 focuses on making notebook execution behave much more like a real
 Jupyter runtime while tightening multiprocessing safety for notebook-defined
