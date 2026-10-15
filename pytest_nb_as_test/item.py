@@ -256,10 +256,8 @@ def _main_module_context(notebook_module: types.ModuleType) -> Iterator[None]:
             sys.modules.pop(_MAIN_MODULE_NAME, None)
 
 
-def pytest_collect_file(  # type: ignore[override]
-    parent: pytest.Collector,
-    path: Any,
-    **kwargs: Any,
+def pytest_collect_file(
+    file_path: Path, parent: pytest.Collector
 ) -> pytest.File | None:
     """Collect Jupyter notebook files as pytest items.
 
@@ -269,17 +267,12 @@ def pytest_collect_file(  # type: ignore[override]
     collection proceeds normally.
 
     Args:
+        file_path: Candidate path supplied by pytest.
         parent: Parent pytest collector.
-        path: Candidate path from pytest (type varies across pytest versions).
-        **kwargs: Additional hook arguments from pytest (varies across versions).
 
     Returns:
         A NotebookFile when the notebook should be collected, otherwise None.
     """
-    raw_path: Any = kwargs.get("file_path", path)
-
-    file_path: Path = Path(str(raw_path))
-
     if file_path.suffix != ".ipynb":
         return None
 
