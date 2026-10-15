@@ -175,6 +175,7 @@ This plugin does not currently read environment variables for configuration.
 | `--notebook-glob` | string | `none` | Glob pattern for notebook filenames, name-only patterns match basenames, path patterns match relative paths. |
 | `--notebook-keep-generated` | `none` `onfail` `<path>`  | `onfail` | Controls dumping of the generated test script. `none` means never dump, `onfail` dumps the script into the report upon a test failure, any other string is treated as a path and the script is written there with a filename derived from the notebook name. |
 | `--notebook-exec-mode` | `auto` `async` `sync` | `auto` | Execution mode for the wrapper function. `auto` (default) auto-detects `await` statements and generates `async def` only when needed; `async` forces `async def` regardless; `sync` forces synchronous execution. Async code is executed with `asyncio.run()`. |
+| `--notebook-path-base` | `pytest-cwd` `notebook-dir` | `pytest-cwd` | Base directory for relative paths used by notebook code. `pytest-cwd` uses the directory where pytest was launched; `notebook-dir` uses the `.ipynb` file's directory. |
 | `--notebook-timeout-seconds` | float | `none` | Wall-clock timeout for an entire notebook, enforced via `pytest-timeout`. |
 | `--notebook-cell-timeout-seconds` | float | `none` | Default per-cell timeout in seconds, enforced via `pytest-timeout`. |
 
@@ -191,6 +192,7 @@ notebook_default_all = false
 notebook_timeout_seconds = 120
 notebook_cell_timeout_seconds = 10
 notebook_glob = test_*.ipynb
+notebook_path_base = notebook-dir
 
 ```
 
@@ -451,3 +453,25 @@ Intended behavior:
 - `must-raise-exception-type` validates the exception class
 - `must-raise-exception-match` validates the error message (regex-style match)
 - both are optional refinements when `must-raise-exception=True`
+
+### Configurable relative-path base for notebooks
+
+Some notebooks assume relative paths resolve from the notebook's own folder,
+while others assume paths resolve from where `pytest` is launched.
+
+Jupyter resolves relative paths from the kernel's current working directory.
+That is often the notebook's folder in local workflows, but it depends on how
+Jupyter was launched. This plugin makes the choice explicit and deterministic.
+
+Use `--notebook-path-base=pytest-cwd` (the default) to preserve pytest's
+working directory, or `--notebook-path-base=notebook-dir` to resolve paths
+relative to each `.ipynb` file:
+
+```ini
+[pytest]
+notebook_path_base = notebook-dir
+```
+
+The setting affects relative paths used by notebook code, including paths used
+by subprocesses launched from the notebook. It does not affect pytest's own
+collection, fixture setup, or fixture teardown paths.

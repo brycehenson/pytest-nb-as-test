@@ -44,7 +44,9 @@ from .notebook_code import (
     _extract_future_imports,
 )
 from .options import (
+    NotebookPathBase,
     _parse_bool,
+    _parse_notebook_path_base,
     _parse_optional_timeout,
     _parse_timeout_seconds,
     _resolve_option,
@@ -56,6 +58,36 @@ from .timeout import (
 )
 
 _IPYTHON_GLOBAL_NAMES = frozenset({"In", "Out", "_ih", "_oh", "_dh"})
+
+
+@contextmanager
+def _notebook_working_directory(
+    path_base: NotebookPathBase,
+    notebook_path: Path,
+) -> Iterator[None]:
+    """Set the requested current working directory for notebook execution.
+
+    Args:
+        path_base: Configured base for relative notebook paths.
+        notebook_path: Path to the notebook being executed.
+
+    Yields:
+        None.
+
+    Example:
+        with _notebook_working_directory("notebook-dir", notebook_path):
+            execute_notebook_code()
+    """
+    if path_base == "pytest-cwd":
+        yield
+        return
+
+    original_cwd = Path.cwd()
+    os.chdir(notebook_path.resolve().parent)
+    try:
+        yield
+    finally:
+        os.chdir(original_cwd)
 
 
 def _find_ipython_runtime_references(source: str) -> set[str]:
@@ -330,6 +362,9 @@ class NotebookFile(pytest.File):
             raise pytest.UsageError(
                 f"--notebook-exec-mode must be 'auto', 'async' or 'sync', got {exec_mode!r}"
             )
+        path_base = _parse_notebook_path_base(
+            _resolve_option(config, "notebook_path_base", default="pytest-cwd")
+        )
 
         notebook_timeout_seconds = _parse_optional_timeout(
             _resolve_option(config, "notebook_timeout_seconds", default=""),
@@ -448,6 +483,7 @@ class NotebookFile(pytest.File):
                 path=self.path,
                 code="",
                 is_async=(str(exec_mode).lower() == "async"),
+                path_base=path_base,
                 keep_generated=keep_generated,
                 cell_spans=[],
                 timeout_config=timeout_config,
@@ -616,6 +652,7 @@ class NotebookFile(pytest.File):
             path=self.path,
             code=generated_code,
             is_async=is_async,
+            path_base=path_base,
             keep_generated=keep_generated,
             cell_spans=cell_spans,
             timeout_config=timeout_config,
@@ -625,7 +662,7 @@ class NotebookFile(pytest.File):
         return [item]
 
 
-class NotebookItem(pytest.Function):
+class NotebookItem(pytest.Function):  # pylint: disable=too-many-instance-attributes
     """A pytest Item representing a single notebook.
 
     Each NotebookItem contains the generated Python code for a notebook and
@@ -648,6 +685,7 @@ class NotebookItem(pytest.Function):
         path: Path,
         code: str,
         is_async: bool,
+        path_base: NotebookPathBase,
         keep_generated: str | None,
         cell_spans: list[CellCodeSpan],
         timeout_config: NotebookTimeoutConfig,
@@ -678,6 +716,7 @@ class NotebookItem(pytest.Function):
         self.path = path
         self._generated_code = code
         self._is_async = is_async
+        self._path_base = path_base
         self._keep_generated = keep_generated or "onfail"
         self._cell_spans = cell_spans
         self._timeout_config = timeout_config
@@ -864,28 +903,29 @@ class NotebookItem(pytest.Function):
                 self._validate_spawn_callable,
                 used_start_methods,
             ):
-                try:
-                    if self._is_async:
-                        maybe_coroutine = eval(  # pylint: disable=eval-used
-                            code_obj,
-                            namespace,
-                        )
-                        if inspect.iscoroutine(maybe_coroutine):
-                            async_result = cast(
-                                Coroutine[Any, Any, Any],
-                                maybe_coroutine,
+                with _notebook_working_directory(self._path_base, self.path):
+                    try:
+                        if self._is_async:
+                            maybe_coroutine = eval(  # pylint: disable=eval-used
+                                code_obj,
+                                namespace,
                             )
-                            asyncio.run(async_result)
-                    else:
-                        exec(code_obj, namespace)  # pylint: disable=exec-used
-                except Exception as error:  # pylint: disable=broad-exception-caught
-                    normalized = self._normalize_spawn_error(
-                        error=error,
-                        used_start_methods=used_start_methods,
-                    )
-                    if normalized is not None:
-                        raise normalized from error
-                    raise
+                            if inspect.iscoroutine(maybe_coroutine):
+                                async_result = cast(
+                                    Coroutine[Any, Any, Any],
+                                    maybe_coroutine,
+                                )
+                                asyncio.run(async_result)
+                        else:
+                            exec(code_obj, namespace)  # pylint: disable=exec-used
+                    except Exception as error:  # pylint: disable=broad-exception-caught
+                        normalized = self._normalize_spawn_error(
+                            error=error,
+                            used_start_methods=used_start_methods,
+                        )
+                        if normalized is not None:
+                            raise normalized from error
+                        raise
 
     def _find_cell_span(self, line_no: int) -> CellCodeSpan | None:
         """Find the cell span that contains a generated line number.

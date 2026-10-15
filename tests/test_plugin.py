@@ -18,6 +18,7 @@ uv run --python 3.12 pytest .
 from __future__ import annotations
 
 import importlib.util
+import json
 import multiprocessing as mp
 import re
 import shutil
@@ -92,6 +93,46 @@ def _runpytest_subprocess(pytester: pytest.Pytester, *args: str) -> Any:
     if PYTEST_XDIST_AVAILABLE and not _has_numprocesses_arg(args):
         return pytester.runpytest_subprocess("-n", "0", *args)
     return pytester.runpytest_subprocess(*args)
+
+
+def _write_path_notebook(
+    notebook_path: Path,
+    relative_file: str,
+    *,
+    is_async: bool = False,
+) -> None:
+    """Write a notebook that reads a relative file containing a sentinel value.
+
+    Args:
+        notebook_path: Destination notebook path.
+        relative_file: File path the notebook reads relative to its CWD.
+        is_async: Whether to include a top-level await in the notebook.
+
+    Example:
+        _write_path_notebook(pytester.path / "test_paths.ipynb", "data.txt")
+    """
+    source = ["from pathlib import Path\n"]
+    if is_async:
+        source.extend(["import asyncio\n", "await asyncio.sleep(0)\n"])
+    source.append(f"assert Path({relative_file!r}).read_text() == 'expected'\n")
+    notebook_path.write_text(
+        json.dumps(
+            {
+                "cells": [
+                    {
+                        "cell_type": "code",
+                        "execution_count": None,
+                        "metadata": {},
+                        "outputs": [],
+                        "source": source,
+                    }
+                ],
+                "metadata": {},
+                "nbformat": 4,
+                "nbformat_minor": 5,
+            }
+        )
+    )
 
 
 def test_pytest_configure_rejects_incompatible_pytest_asyncio_pair(
@@ -372,6 +413,186 @@ def test_notebook_glob_filters(pytester: pytest.Pytester) -> None:
     shutil.copy2(src, pytester.path / src.name)
     result = _runpytest_subprocess(pytester, "--notebook-glob=example_simple_*.ipynb")
     result.assert_outcomes(passed=1)
+
+
+def test_notebook_path_base_defaults_to_pytest_cwd(
+    pytester: pytest.Pytester,
+) -> None:
+    """Resolve relative notebook paths from pytest's working directory by default.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_notebook_path_base_defaults_to_pytest_cwd
+    """
+    nested_dir = pytester.path / "nested"
+    nested_dir.mkdir()
+    (pytester.path / "root-data.txt").write_text("expected")
+    _write_path_notebook(nested_dir / "test_paths.ipynb", "root-data.txt")
+
+    result = _runpytest_subprocess(pytester, "nested/test_paths.ipynb")
+
+    result.assert_outcomes(passed=1)
+
+
+def test_notebook_path_base_uses_notebook_directory(
+    pytester: pytest.Pytester,
+) -> None:
+    """Resolve relative paths beside a notebook in ``notebook-dir`` mode.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_notebook_path_base_uses_notebook_directory
+    """
+    nested_dir = pytester.path / "nested"
+    nested_dir.mkdir()
+    (nested_dir / "notebook-data.txt").write_text("expected")
+    _write_path_notebook(nested_dir / "test_paths.ipynb", "notebook-data.txt")
+
+    result = _runpytest_subprocess(
+        pytester,
+        "--notebook-path-base=notebook-dir",
+        "nested/test_paths.ipynb",
+    )
+
+    result.assert_outcomes(passed=1)
+
+
+def test_notebook_path_base_uses_ini_configuration(
+    pytester: pytest.Pytester,
+) -> None:
+    """Resolve relative paths beside a notebook when pytest.ini selects it.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_notebook_path_base_uses_ini_configuration
+    """
+    nested_dir = pytester.path / "nested"
+    nested_dir.mkdir()
+    pytester.makeini("[pytest]\nnotebook_path_base = notebook-dir")
+    (nested_dir / "notebook-data.txt").write_text("expected")
+    _write_path_notebook(nested_dir / "test_paths.ipynb", "notebook-data.txt")
+
+    result = _runpytest_subprocess(pytester, "nested/test_paths.ipynb")
+
+    result.assert_outcomes(passed=1)
+
+
+def test_notebook_path_base_cli_overrides_ini(pytester: pytest.Pytester) -> None:
+    """Prefer an explicit path-base CLI option over pytest.ini configuration.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_notebook_path_base_cli_overrides_ini
+    """
+    nested_dir = pytester.path / "nested"
+    nested_dir.mkdir()
+    pytester.makeini("[pytest]\nnotebook_path_base = notebook-dir")
+    (pytester.path / "root-data.txt").write_text("expected")
+    _write_path_notebook(nested_dir / "test_paths.ipynb", "root-data.txt")
+
+    result = _runpytest_subprocess(
+        pytester,
+        "--notebook-path-base=pytest-cwd",
+        "nested/test_paths.ipynb",
+    )
+
+    result.assert_outcomes(passed=1)
+
+
+def test_notebook_path_base_uses_notebook_directory_for_async_notebook(
+    pytester: pytest.Pytester,
+) -> None:
+    """Keep notebook-directory path semantics through async execution.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_notebook_path_base_uses_notebook_directory_for_async_notebook
+    """
+    nested_dir = pytester.path / "nested"
+    nested_dir.mkdir()
+    (nested_dir / "notebook-data.txt").write_text("expected")
+    _write_path_notebook(
+        nested_dir / "test_paths.ipynb",
+        "notebook-data.txt",
+        is_async=True,
+    )
+
+    result = _runpytest_subprocess(
+        pytester,
+        "--notebook-path-base=notebook-dir",
+        "nested/test_paths.ipynb",
+    )
+
+    result.assert_outcomes(passed=1)
+
+
+def test_notebook_path_base_rejects_invalid_value(
+    pytester: pytest.Pytester,
+) -> None:
+    """Reject unsupported relative-path base values during notebook collection.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_notebook_path_base_rejects_invalid_value
+    """
+    _write_path_notebook(pytester.path / "test_paths.ipynb", "missing.txt")
+
+    result = _runpytest_subprocess(
+        pytester,
+        "--notebook-path-base=project-root",
+        "test_paths.ipynb",
+    )
+
+    assert result.ret != 0
+    result.stdout.fnmatch_lines(
+        ["*--notebook-path-base must be 'pytest-cwd' or 'notebook-dir'*"]
+    )
+
+
+def test_notebook_path_base_restores_cwd_after_failure(
+    pytester: pytest.Pytester,
+) -> None:
+    """Restore pytest's working directory when notebook execution fails.
+
+    Args:
+        pytester: Pytest fixture for running tests in a temporary workspace.
+
+    Example:
+        pytest -k test_notebook_path_base_restores_cwd_after_failure
+    """
+    nested_dir = pytester.path / "nested"
+    nested_dir.mkdir()
+    _write_path_notebook(nested_dir / "test_paths.ipynb", "missing.txt")
+    pytester.makepyfile(
+        test_cwd="""
+        from pathlib import Path
+
+        def test_cwd_is_pytest_root() -> None:
+            \"\"\"Use pytest's project directory after notebook failure.\"\"\"
+            assert Path.cwd() == Path(__file__).parent
+        """
+    )
+
+    result = _runpytest_subprocess(
+        pytester,
+        "--notebook-path-base=notebook-dir",
+        "nested/test_paths.ipynb",
+        "test_cwd.py",
+    )
+
+    result.assert_outcomes(passed=1, failed=1)
 
 
 def test_xdist_worksteal_hookwrapper(pytester: pytest.Pytester) -> None:

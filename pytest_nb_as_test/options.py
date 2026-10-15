@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Literal, cast
 
 import pytest  # type: ignore
+
+
+NotebookPathBase = Literal["pytest-cwd", "notebook-dir"]
+"""Base directory used to resolve relative paths in notebook code."""
 
 
 def _parse_bool(value: str) -> bool:
@@ -70,6 +74,30 @@ def _parse_optional_timeout(value: Any, where: str) -> float | None:
     if value in (None, "", []):
         return None
     return _parse_timeout_seconds(str(value), where)
+
+
+def _parse_notebook_path_base(value: Any) -> NotebookPathBase:
+    """Validate the base directory used for relative notebook paths.
+
+    Args:
+        value: Raw CLI or ini configuration value.
+
+    Returns:
+        The normalized path-base setting.
+
+    Raises:
+        pytest.UsageError: If the setting is not a supported value.
+
+    Example:
+        path_base = _parse_notebook_path_base("notebook-dir")
+    """
+    normalized = str(value).strip().lower()
+    if normalized in {"pytest-cwd", "notebook-dir"}:
+        return cast(NotebookPathBase, normalized)
+    raise pytest.UsageError(
+        "--notebook-path-base must be 'pytest-cwd' or 'notebook-dir', "
+        f"got {value!r}."
+    )
 
 
 def _cli_flag_present(config: pytest.Config, flag: str) -> bool:
@@ -182,6 +210,16 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="Execution mode for notebooks: 'auto' (default), 'async', or 'sync'.",
     )
     group.addoption(
+        "--notebook-path-base",
+        action="store",
+        dest="notebook_path_base",
+        default=None,
+        help=(
+            "Base directory for relative notebook paths: 'pytest-cwd' "
+            "(default) or 'notebook-dir'."
+        ),
+    )
+    group.addoption(
         "--notebook-timeout-seconds",
         action="store",
         dest="notebook_timeout_seconds",
@@ -216,6 +254,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "notebook_exec_mode",
         default="auto",
         help="Execution mode for notebooks (auto/async/sync).",
+    )
+    parser.addini(
+        "notebook_path_base",
+        default="pytest-cwd",
+        help="Base directory for relative notebook paths (pytest-cwd/notebook-dir).",
     )
     parser.addini(
         "notebook_timeout_seconds",
