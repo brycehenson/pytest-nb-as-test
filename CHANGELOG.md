@@ -7,6 +7,7 @@ and this project follows Semantic Versioning.
 
 ## Unreleased
 
+## 1.0.1
 - add pytest 9 support by using the current `pytest_collect_file(file_path, parent)`
   hook signature, which remains supported by pytest 7 and 8
 - test the minimum supported pytest 7 release plus explicit pytest 8 and pytest 9
