@@ -7,6 +7,14 @@ and this project follows Semantic Versioning.
 
 ## Unreleased
 
+- add `--notebook-path-base` and `notebook_path_base` configuration for choosing
+  whether relative notebook paths resolve from pytest's working directory
+  (`pytest-cwd`, the default) or the `.ipynb` file's directory (`notebook-dir`)
+- restore pytest's working directory after notebook execution, including when a
+  notebook fails
+- add path-base regression coverage for CLI and ini configuration, precedence,
+  invalid values, async notebooks, and failure handling
+
 ## 1.0.1
 - add pytest 9 support by using the current `pytest_collect_file(file_path, parent)`
   hook signature, which remains supported by pytest 7 and 8
